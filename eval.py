@@ -260,15 +260,17 @@ def _order_levels(
     Get levels of given order types.
     Returns two Series: ask and bid levels.
     """
+    if (2 in event_types) or (3 in event_types):
+        assert not 1 in event_types, \
+            "Order levels for cancellations and modifications refer to the previous book state and are hence not compatible with new orders."
+        # look at previous book state for cancellations and modifications
+        book = book.shift(1)
+
     order_prices = messages[messages.event_type.isin(event_types)]
     level_prices = book.loc[order_prices.index, 0::2]
     order_prices.index = order_prices.time
-    order_prices.index = order_prices.time
     order_prices = order_prices.price
     lvl_idx = np.argwhere((order_prices.values == level_prices.values.T).T)
-    print('order_prices', order_prices.shape)
-    print('level_prices', level_prices.shape)
-    print(lvl_idx.shape)
     assert lvl_idx.shape[0] == order_prices.shape[0], f"Not all order prices found in book. ({lvl_idx.shape[0]} != {order_prices.shape[0]})"
     # lvl_idx = pd.Series(lvl_idx[:, 0], index=lvl_idx[:, 1])
     # print('lvl_idx', lvl_idx)
