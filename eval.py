@@ -73,13 +73,13 @@ def mean_per_interval(
     Calculate mean of series in given interval.
     """
 
-    dt_start = pd.to_datetime('1970-01-01')
+    # dt_start = pd.to_datetime('1970-01-01')
     # origin arg in resample only works properly with DateTimeIndex
-    series.index = series.index + dt_start
+    # series.index = series.index + dt_start
     means = series.resample(
         period, label='right', closed='left', origin='start_day'
     ).mean()
-    series.index = series.index - dt_start
+    # series.index = series.index - dt_start
     return means
 
 def mid_price(
@@ -90,7 +90,7 @@ def mid_price(
     Calculate mid-price of book.
     """
     mid = (book.iloc[:, 0] + book.iloc[:, 2]) / 2
-    mid.index = pd.to_timedelta(messages.time.astype(float), unit='s')
+    mid.index = messages.time
     return mid
 
 def spread(
@@ -101,7 +101,7 @@ def spread(
     Calculate spread of book.
     """
     spread = book.iloc[:, 0] - book.iloc[:, 2]
-    spread.index = pd.to_timedelta(messages.time.astype(float), unit='s')
+    spread.index = messages.time
     return spread
 
 def mid_returns(
@@ -114,12 +114,10 @@ def mid_returns(
     NOTE: mid-prices are resampled with the last value of the interval to not look ahead.
     """
     mid = mid_price(messages, book)
-    mid.index = pd.to_datetime(messages.time.astype(float), unit='s')
+    mid.index = messages.time
     mid = mid.resample(
         interval, label='right', closed='left', origin='start_day'
     ).last()
-    # convert datetime to timedelta since midnight
-    mid.index = pd.to_timedelta(mid.index - mid.index[0].normalize())
 
     # mid = mid.pct_change()
     ln_p = np.log(mid)
@@ -163,7 +161,7 @@ def time_to_first_fill(messages: pd.DataFrame) -> pd.Series:
         lambda x: x.iloc[:2].time.diff().iloc[-1],
         include_groups = False
     # get rid of nans from orders that were not executed
-    ).dropna().astype(float)
+    ).dropna()
     return del_t
 
 def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
@@ -189,7 +187,7 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
         lambda x: x.iloc[:2].time.diff().iloc[-1],
         include_groups=False
     # get rid of nans from orders that were not cancelled
-    ).dropna().astype(float)
+    ).dropna()
     return del_t
 
 def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> pd.Series:
@@ -206,7 +204,7 @@ def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> p
     df = pd.concat([ask_vol, bid_vol], axis=1)
     df.columns = ['ask_vol', 'bid_vol']
     df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
-    df.index = pd.to_timedelta(messages.time.astype(float), unit='s')
+    df.index = messages.time
 
     return df
 
@@ -219,7 +217,7 @@ def l1_volume(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     df = book.iloc[:, [1, 3]].copy()
     df.columns = ['ask_vol', 'bid_vol']
     df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
-    df.index = pd.to_timedelta(messages.time.astype(float), unit='s')
+    df.index = messages.time
     return df
 
 def _order_depth(
@@ -235,7 +233,7 @@ def _order_depth(
     mid_prices = (book.iloc[:, 0] + book.iloc[:, 2]) / 2
 
     depth = order_prices - mid_prices
-    depth.index = pd.to_timedelta(messages.time.astype(float), unit='s')
+    depth.index = messages.time
     ask_depth = depth[depth > 0]
     bid_depth = depth[depth < 0]
     return ask_depth, bid_depth.abs()
@@ -264,10 +262,14 @@ def _order_levels(
     """
     order_prices = messages[messages.event_type.isin(event_types)]
     level_prices = book.loc[order_prices.index, 0::2]
-    order_prices.index = pd.to_timedelta(order_prices.time.astype(float), unit='s')
+    order_prices.index = order_prices.time
+    order_prices.index = order_prices.time
     order_prices = order_prices.price
     lvl_idx = np.argwhere((order_prices.values == level_prices.values.T).T)
-    assert lvl_idx.shape[0] == order_prices.shape[0], "Not all order prices found in book."
+    print('order_prices', order_prices.shape)
+    print('level_prices', level_prices.shape)
+    print(lvl_idx.shape)
+    assert lvl_idx.shape[0] == order_prices.shape[0], f"Not all order prices found in book. ({lvl_idx.shape[0]} != {order_prices.shape[0]})"
     # lvl_idx = pd.Series(lvl_idx[:, 0], index=lvl_idx[:, 1])
     # print('lvl_idx', lvl_idx)
     lvl_idx = pd.Series(lvl_idx[:, 1], index=order_prices.index)

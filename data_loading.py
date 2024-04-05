@@ -35,6 +35,7 @@ def load_book_df(b_f: str) -> pd.DataFrame:
 def add_date_to_time(df: pd.DataFrame, date: str) -> pd.Series:
     # df.time = pd.to_datetime(date) + pd.to_datetime(df.time, unit='s')
     sec_nanosec = df.time.astype(str).str.split('.', expand=True)
+    sec_nanosec[1] = sec_nanosec[1].str.pad(9, side='right', fillchar='0')
     df.time = pd.to_datetime(date) + pd.to_timedelta(sec_nanosec[0] + 's') + pd.to_timedelta(sec_nanosec[1] + 'ns')
     return df
 
