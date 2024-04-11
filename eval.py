@@ -65,6 +65,45 @@ from pandas.tseries.offsets import DateOffset
 import statsmodels.api as sm
 
 
+def compute_metrics(loader):
+    def _compute_seq_metrics(m, b):
+        report_interval = '5min'
+
+        ask_limit_depth, bid_limit_depth = limit_order_depth(m, b)
+        ask_cancel_depth, bid_cancel_depth = cancellation_depth(m, b)
+        ask_limit_levels, bid_limit_levels = limit_order_levels(m, b)
+        ask_cancel_levels, bid_cancel_levels = cancel_order_levels(m, b)
+
+        metrics = (
+            mean_per_interval(spread(m, b), report_interval),
+            mean_per_interval(mid_returns(m, b, '1min'), report_interval),
+
+            # autocorr(mid_returns(m, b, '1min'), lags=1),
+            # autocorr(mid_returns(m, b, '1min')**2, lags=10),
+            
+            # time_to_first_fill(m),
+            # time_to_cancel(m),
+            
+            mean_per_interval(l1_volume(m, b), report_interval),
+            mean_per_interval(total_volume(m, b, 10), report_interval),
+            mean_per_interval(ask_limit_depth, report_interval),
+            mean_per_interval(bid_limit_depth, report_interval),
+            mean_per_interval(ask_cancel_depth, report_interval),
+            mean_per_interval(bid_cancel_depth, report_interval),
+            mean_per_interval(ask_limit_levels, report_interval),
+            mean_per_interval(bid_limit_levels, report_interval),
+            mean_per_interval(ask_cancel_levels, report_interval),
+            mean_per_interval(bid_cancel_levels, report_interval),
+        )
+        metrics = pd.concat(metrics, axis=1)
+        return metrics
+
+    for m_real, b_real, m_gen, b_gen in loader:
+        # calculate metrics
+        real_metrics = _compute_seq_metrics(m_real, b_real)
+        # TODO: also calculate metrics for generated data and combine data overview
+        return real_metrics
+
 def mean_per_interval(
         series: pd.Series, 
         period: Union[DateOffset, timedelta, str] = '5Min'
@@ -102,6 +141,7 @@ def spread(
     """
     spread = book.iloc[:, 0] - book.iloc[:, 2]
     spread.index = messages.time
+    spread.name = 'spread'
     return spread
 
 def mid_returns(
@@ -122,6 +162,7 @@ def mid_returns(
     # mid = mid.pct_change()
     ln_p = np.log(mid)
     ret = ln_p - ln_p.shift(1)
+    ret.name = 'mid_returns_' + interval
 
     return ret
 
@@ -202,7 +243,7 @@ def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> p
     ask_vol = book.iloc[:, 1: 2*n_levels: 2].sum(axis=1)
     bid_vol = book.iloc[:, 0: 2*n_levels: 2].sum(axis=1)
     df = pd.concat([ask_vol, bid_vol], axis=1)
-    df.columns = ['ask_vol', 'bid_vol']
+    df.columns = ['ask_vol_' + str(n_levels), 'bid_vol_' + str(n_levels)]
     df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
     df.index = messages.time
 
@@ -243,13 +284,19 @@ def limit_order_depth(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Se
     Calculate depth (level) of new limit order events.
     Returns ask and bid depth Series.
     """
-    return _order_depth(messages, book, (1,))
+    ask_depth, bid_depth = _order_depth(messages, book, (1,))
+    ask_depth.name = 'ask_limit_depth'
+    bid_depth.name = 'bid_limit_depth'
+    return ask_depth, bid_depth
 
 def cancellation_depth(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """
     Calculate depth of limit order cancellation or modifications.
     """
-    return _order_depth(messages, book, (2, 3))
+    ask_depth, bid_depth =  _order_depth(messages, book, (2, 3))
+    ask_depth.name = 'ask_cancel_depth'
+    bid_depth.name = 'bid_cancel_depth'
+    return ask_depth, bid_depth
 
 def _order_levels(
         messages: pd.DataFrame,
@@ -290,11 +337,17 @@ def limit_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.S
     Get levels of new limit orders.
     Returns ask and bid levels Series.
     """
-    return _order_levels(messages, book, (1,))
+    ask_levels, bid_levels = _order_levels(messages, book, (1,))
+    ask_levels.name = 'ask_limit_level'
+    bid_levels.name = 'bid_limit_level'
+    return ask_levels, bid_levels
 
 def cancel_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """
     Get levels of limit order cancellations and modifications.
     Returns ask and bid levels Series.
     """
-    return _order_levels(messages, book, (2, 3))
+    ask_levels, bid_levels = _order_levels(messages, book, (2, 3))
+    ask_levels.name = 'ask_cancel_level'
+    bid_levels.name = 'bid_cancel_level'
+    return ask_levels, bid_levels
