@@ -66,6 +66,7 @@ import statsmodels.api as sm
 
 
 def compute_metrics(loader):
+    """DEPRECATED"""
     def _compute_seq_metrics(m, b):
         report_interval = '5min'
 

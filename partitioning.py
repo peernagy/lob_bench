@@ -242,30 +242,6 @@ def group_by_subseq(
     ]
     return groups_real, groups_gen
 
-# def get_score_table(
-#         scores_real: Iterable,
-#         scores_gen: Iterable[Iterable],
-#         groups: Iterable,
-#     ) -> pd.DataFrame:
-#     """
-#     """
-#     real_data = [
-#         (sr, g, 'real') \
-#             for scores_i, groups_i in zip(scores_real, groups) \
-#                 for sr, g in zip(scores_i, groups_i[0])
-#     ]
-#     gen_data = [
-#         (sg, g, 'generated') \
-#             for scores_i, groups_i in zip(scores_gen, groups) \
-#                 for scores_ij, groups_ij in zip(scores_i, groups_i[1]) \
-#                     for sg, g in zip(scores_ij, groups_ij)
-#             # for sg_i, g in zip(scores_gen, groups) \
-#             #     for sg in sg_i
-#     ]
-#     data = real_data + gen_data
-#     df = pd.DataFrame(data, columns=['score', 'group', 'type'])
-#     return df
-
 def get_score_table(
         scores_real: Iterable,
         scores_gen: Iterable[Iterable],
