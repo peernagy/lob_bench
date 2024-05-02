@@ -94,6 +94,8 @@ def _split_by_time_interval(
         book: pd.DataFrame,
         time_interval: str
     ) -> tuple[pd.DataFrame]:
+        """
+        """
         num_message_cols = len(messages.columns)
         df = pd.concat([messages, book], axis=1)
         groups = tuple(group for _, group in df.groupby(pd.Grouper(
@@ -116,6 +118,16 @@ def score_cond(
     """
     scores = np.array([scoring_fn(seq.m_cond, seq.b_cond) for seq in seqs])
     return scores
+
+def score_real_gen(
+        seqs: Iterable[data_loading.Lobster_Sequence],
+        scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    ) -> list:
+    """
+    """
+    scores_real = _score_data(seqs, scoring_fn, score_real=True)
+    scores_gen = _score_data(seqs, scoring_fn, score_real=False)
+    return scores_real, scores_gen
 
 def score_real(
         seqs: Iterable[data_loading.Lobster_Sequence],
@@ -160,7 +172,13 @@ def _score_seq(
         messages = seq.m_gen
         book = seq.b_gen
     if isinstance(messages, data_loading.Lazy_Tuple) or isinstance(messages, tuple):
-        score = tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(messages, book))
+        if isinstance(messages[0], data_loading.Lazy_Tuple) or isinstance(messages[0], tuple):
+            score = tuple(
+                tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(m_subseq, b_subseq)) \
+                for m_subseq, b_subseq in zip(messages, book) 
+            )
+        else:
+            score = tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(messages, book))
     else:
         score = scoring_fn(messages, book)
     return score
@@ -210,3 +228,65 @@ def group_by_score(
         ]
     
     return groups_real, groups_gen
+
+def group_by_subseq(
+        subseqs: Iterable[data_loading.Lobster_Sequence],
+    ) -> list:
+    """
+    """
+    groups_real = [
+        np.arange(len(s.m_real)) for s in subseqs
+    ]
+    groups_gen = [
+        tuple(np.arange(len(m)) for m in s.m_gen) for s in subseqs
+    ]
+    return groups_real, groups_gen
+
+# def get_score_table(
+#         scores_real: Iterable,
+#         scores_gen: Iterable[Iterable],
+#         groups: Iterable,
+#     ) -> pd.DataFrame:
+#     """
+#     """
+#     real_data = [
+#         (sr, g, 'real') \
+#             for scores_i, groups_i in zip(scores_real, groups) \
+#                 for sr, g in zip(scores_i, groups_i[0])
+#     ]
+#     gen_data = [
+#         (sg, g, 'generated') \
+#             for scores_i, groups_i in zip(scores_gen, groups) \
+#                 for scores_ij, groups_ij in zip(scores_i, groups_i[1]) \
+#                     for sg, g in zip(scores_ij, groups_ij)
+#             # for sg_i, g in zip(scores_gen, groups) \
+#             #     for sg in sg_i
+#     ]
+#     data = real_data + gen_data
+#     df = pd.DataFrame(data, columns=['score', 'group', 'type'])
+#     return df
+
+def get_score_table(
+        scores_real: Iterable,
+        scores_gen: Iterable[Iterable],
+        groups_real: Iterable,
+        groups_gen: Iterable[Iterable],
+    ) -> pd.DataFrame:
+    """
+    """
+    real_data = [
+        (sr, g, 'real') \
+            for scores_i, groups_i in zip(scores_real, groups_real) \
+                for sr, g in zip(scores_i, groups_i)
+    ]
+    gen_data = [
+        (sg, g, 'generated') \
+            for scores_i, groups_i in zip(scores_gen, groups_gen) \
+                for scores_ij, groups_ij in zip(scores_i, groups_i) \
+                    for sg, g in zip(scores_ij, groups_ij)
+            # for sg_i, g in zip(scores_gen, groups) \
+            #     for sg in sg_i
+    ]
+    data = real_data + gen_data
+    df = pd.DataFrame(data, columns=['score', 'group', 'type'])
+    return df
