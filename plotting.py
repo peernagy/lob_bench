@@ -28,7 +28,7 @@ def hist(
     )
     # sns.histplot(gen, color='red', alpha=0.5, label='Generated', ax=plt.gca())
     # plt.legend()
-    finish_plot(title, xlabel, ylabel)
+    _finish_plot(title, xlabel, ylabel)
 
 def scatter(
         score_df: pd.DataFrame,
@@ -39,7 +39,7 @@ def scatter(
     """
     """
     sns.scatterplot(data=score_df, x='group', y='score', hue='type')
-    finish_plot(title, xlabel, ylabel)
+    _finish_plot(title, xlabel, ylabel)
 
 def line(
         score_df: pd.DataFrame,
@@ -53,9 +53,9 @@ def line(
         data=score_df, x='group', y='score', hue='type',
         errorbar=("pi", 0.95)
     )
-    finish_plot(title, xlabel, ylabel)
+    _finish_plot(title, xlabel, ylabel)
 
-def finish_plot(
+def _finish_plot(
         title: str= '',
         xlabel: str= 'Group',
         ylabel: str= 'Score',

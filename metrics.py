@@ -1,3 +1,4 @@
+import pandas as pd
 import scipy.stats as stats
 from partitioning import flatten
 
@@ -5,6 +6,15 @@ from partitioning import flatten
 def wasserstein(p, q):
     p, q = flatten(p), flatten(q)
     return stats.wasserstein_distance(p, q)
+
+def l1_by_group(score_df: pd.DataFrame) -> float:
+    """
+    Takes a "score dataframe" with columns score (real numbers), group (+int), type ("real" or "generated")
+    Returns the mean L1 distance between the number of scores in each group for the real and generated data.
+    """
+    group_counts = score_df.groupby(['type', 'group']).count()
+    group_counts = pd.merge(group_counts.loc['real'], group_counts.loc['generated'], on='group')
+    return (group_counts.score_x - group_counts.score_y).abs().mean()
 
 # TODO: Implement way to estimate KL based on samples from continuous distributions
 #       e.g. using KDE, fitting densities (check empirical distribution shapes - normal?)
