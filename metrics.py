@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from partitioning import flatten
@@ -15,6 +16,26 @@ def l1_by_group(score_df: pd.DataFrame) -> float:
     group_counts = score_df.groupby(['type', 'group']).count()
     group_counts = pd.merge(group_counts.loc['real'], group_counts.loc['generated'], on='group')
     return (group_counts.score_x - group_counts.score_y).abs().mean()
+
+def ob3Drepr(orderbook, row_index):
+    '''
+    Input is the orderbook, for example, `b_real`, `b_gene`, and the corresponding `row_index`. 
+    Output is the 3D reconstruction of the row in the orderbook corresponding to `row_index`.
+    delta_mid_price: delta mid-price
+    index:           relative price level where change occurs,
+    quant:           change in quantity at that level
+    '''
+    price_level = 10
+    delta_mid_price = orderbook.iloc[row_index,-1]
+    lb_array=orderbook.iloc[row_index-1,:4*price_level].values.reshape(2*price_level,2)
+    b_array=orderbook.iloc[row_index,:4*price_level].values.reshape(2*price_level,2)
+    lb_unique = np.array([x for x in lb_array if not any(np.array_equal(x, y) for y in b_array)])
+    b_unique = np.array([x for x in b_array if not any(np.array_equal(x, y) for y in lb_array)])
+    first_lb_unique=lb_unique[0];first_b_unique=b_unique[0]
+    index = np.where(b_array[:, 0] == first_b_unique[0])[0][0]
+    quant = np.where(first_b_unique[0] == first_lb_unique[0], first_b_unique[1] - first_lb_unique[1], first_b_unique[1])
+    result = np.array([delta_mid_price,index,quant])
+    return result
 
 # TODO: Implement way to estimate KL based on samples from continuous distributions
 #       e.g. using KDE, fitting densities (check empirical distribution shapes - normal?)
