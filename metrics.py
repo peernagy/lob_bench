@@ -2,6 +2,15 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from partitioning import flatten
+import warnings
+
+import scipy, time
+import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
+from scipy import stats, integrate
+
+import scipy.stats
+from sklearn.neighbors import KernelDensity
 
 
 def wasserstein(p, q):
@@ -43,10 +52,9 @@ def ob3Drepr(orderbook, row_index):
 #       WHY? -> KL is undefined if the support of the two distributions is not the same, so we can't just use the discrete values of the histograms
 #       (or would need to define the bins in a way that the support is the same, but this would underestimate the KL)
 
-import scipy.stats
-from sklearn.neighbors import KernelDensity
 
-def kl_divergence(a, b):
+
+def kl_divergence_kde(a, b):
     """
     Calculate the Kullback-Leibler (KL) divergence between the KDEs of two datasets.
 
@@ -95,7 +103,86 @@ def kl_divergence(a, b):
 
     # print("KL Divergence:", kl_div)
     return kl_div
-kl_divergence(a, b)
 
+
+
+
+def kl_divergence_PerezCruz(P, Q, eps=1e-11):
+    '''
+    Only work for one dimensional, e.g. P(N*1) and Q(M*1) as input
+    
+    Kullback-Leibler divergence estimation of continuous distributions
+    Published in IEEE International Symposium… 6 July 2008 Mathematics
+    F. Pérez-Cruz, Pedro E. Harunari, Ariel Yssou 
+    
+    Codes based on Section II of Fernando Pérez-Cruz's paper 
+    "Kullback-Leibler Divergence Estimation of Continuous Distributions". 
+    From two independent datasets of continuous variables, 
+    the KLD (aka relative entropy) is estimated by the construction of 
+    cumulative probability distributions and the comparison between their slopes at specific points.
+    Estimating the probability distributions and directly evaluating KLD's definition
+    leads to a biased estimation, whereas the present method leads to an unbiased estimation. 
+    This is particularly important in practical applications due to the finitude of collected statistics.
+
+    Func takes two datasets to estimate the relative entropy between their PDFs
+    we use eps=10^-11, but it could be defined as < the minimal interval between data points.
+    '''
+    def cumcount_reduced(arr):
+        '''Returns the step function value at each increment of the CDF'''
+        sorted_arr = np.array(sorted(arr))
+        counts = np.zeros(len(arr))
+        
+        rolling_count = 0
+        for idx, elem in enumerate(sorted_arr):
+            rolling_count += 1
+            counts[idx] = rolling_count
+
+        counts /= len(counts)
+        counts -= (1 / (2 * len(counts)))
+
+        return (sorted_arr, counts)
+    P = sorted(P)
+    Q = sorted(Q)
+    
+    P_positions, P_counts = cumcount_reduced(P)
+    Q_positions, Q_counts = cumcount_reduced(Q)
+    
+    #definition of x_0 and x_{n+1}
+    x_0 = np.min([P_positions[0], Q_positions[0]]) - 1
+    P_positions = np.insert(P_positions, 0, [x_0])
+    P_counts = np.insert(P_counts, 0, [0])
+    Q_positions = np.insert(Q_positions, 0, [x_0])
+    Q_counts = np.insert(Q_counts, 0, [0])
+    
+    x_np1 = np.max([P_positions[-1], Q_positions[-1]]) + 1
+    P_positions = np.append(P_positions, [x_np1])
+    P_counts = np.append(P_counts, [1])
+    Q_positions = np.append(Q_positions, [x_np1])
+    Q_counts = np.append(Q_counts, [1])
+    
+    f_P = interp1d(P_positions, P_counts)
+    f_Q = interp1d(Q_positions, Q_counts) 
+    
+    X = P_positions[1:-2]
+    values = (f_P(X) - f_P(X - eps)) / (f_Q(X) - f_Q(X - eps))
+    filt = ((values != 0.) & ~(np.isinf(values)) & ~(np.isnan(values)))
+    values_filter = values[filt]
+    out = (np.sum(np.log(values_filter)) / len(values_filter)) - 1.
+
+    return out
 
 # TODO (Peer): use the wasserstein metric to compute differences between order book volume samples (copy from LOBS5 project)
+
+if __name__=="__main__":
+    # Example usage
+    N = 1011
+    M = 1234
+    # M = 211
+    K = 1
+    a = np.random.rand(N, K)
+    b = np.random.rand(M, K)
+    kl_divergence_kde(a, b)
+    kl_divergence_PerezCruz(a, b)
+    
+
+
