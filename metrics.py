@@ -12,6 +12,8 @@ from scipy import stats, integrate
 import scipy.stats
 from sklearn.neighbors import KernelDensity
 
+from scipy.spatial import cKDTree
+
 
 def wasserstein(p, q):
     p, q = flatten(p), flatten(q)
@@ -170,6 +172,40 @@ def kl_divergence_PerezCruz(P, Q, eps=1e-11):
     out = (np.sum(np.log(values_filter)) / len(values_filter)) - 1.
 
     return out
+
+
+
+def kl_divergence_knn(X, Y):
+    """
+    Estimate the Kullback-Leibler divergence between two multivariate samples.
+
+    Parameters
+    ----------
+    X : 2D numpy array (n, d)
+        Samples from distribution P, which typically represents the true distribution.
+    Y : 2D numpy array (m, d)
+        Samples from distribution Q, which typically represents the approximate distribution.
+
+    Returns
+    -------
+    out : float
+        The estimated Kullback-Leibler divergence D(P||Q).
+    """
+    # Get important dimensions
+    d = X.shape[1]  # number of dimensions, must be the same in X and Y
+    n = X.shape[0]  # number of samples in X
+    m = Y.shape[0]  # number of samples in Y
+
+    # Get distances to nearest neighbors using cKDTree
+    kdtree_X = cKDTree(X)
+    kdtree_Y = cKDTree(Y)
+
+    # Distances to the nearest neighbors within the same dataset
+    r = kdtree_X.query(X, k=2, eps=0.01)[0][:, 1]  # distances to the 2nd closest neighbor
+    s = kdtree_Y.query(X, k=1, eps=0.01)[0]  # distances to the closest neighbor
+
+    # There is a mistake in the paper. In Eq. 14, the right side misses a negative sign on the first term of the right hand side.
+    return - np.sum(np.log(r / s)) * d / n + np.log(m / (n - 1))
 
 # TODO (Peer): use the wasserstein metric to compute differences between order book volume samples (copy from LOBS5 project)
 
