@@ -43,4 +43,59 @@ def ob3Drepr(orderbook, row_index):
 #       WHY? -> KL is undefined if the support of the two distributions is not the same, so we can't just use the discrete values of the histograms
 #       (or would need to define the bins in a way that the support is the same, but this would underestimate the KL)
 
+import scipy.stats
+from sklearn.neighbors import KernelDensity
+
+def kl_divergence(a, b):
+    """
+    Calculate the Kullback-Leibler (KL) divergence between the KDEs of two datasets.
+
+    Args:
+        a (np.ndarray): First dataset of shape (N, K), where N is the number of samples and K is the number of features.
+        b (np.ndarray): Second dataset of shape (M, K), where M is the number of samples and K is the number of features.
+
+    Returns:
+        float: The KL divergence between the two datasets.
+    """
+    N = a.shape[0]
+    M = b.shape[0]
+    K = a.shape[1]
+    assert a.shape[1] == b.shape[1]    
+
+    # Fit KDE models
+    kde_a = KernelDensity(kernel='gaussian', bandwidth=0.1).fit(a)
+    kde_b = KernelDensity(kernel='gaussian', bandwidth=0.1).fit(b)
+
+    # Generate evaluation points based on the average number of samples
+    num_points = int(np.mean([N, M]) * 10)
+    # x = np.linspace(0, 1, 1000)
+    x = np.linspace(0, 1, num_points)
+
+    # Generate a grid of K-dimensional points for PDF evaluation
+    grid = np.array(np.meshgrid(*([x] * K))).T.reshape(-1, K)
+    
+
+    log_pdf_a = kde_a.score_samples(grid)
+    log_pdf_b = kde_b.score_samples(grid)
+
+    pdf_a = np.exp(log_pdf_a)
+    pdf_b = np.exp(log_pdf_b)
+
+    # Add a small value to PDFs to avoid log(0)
+    epsilon = 1e-10
+    pdf_a += epsilon
+    pdf_b += epsilon
+
+    # Normalize PDFs
+    pdf_a /= np.sum(pdf_a)
+    pdf_b /= np.sum(pdf_b)
+
+    # Calculate KL divergence
+    kl_div = scipy.stats.entropy(pdf_a, pdf_b)
+
+    # print("KL Divergence:", kl_div)
+    return kl_div
+kl_divergence(a, b)
+
+
 # TODO (Peer): use the wasserstein metric to compute differences between order book volume samples (copy from LOBS5 project)

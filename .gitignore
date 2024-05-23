@@ -5,3 +5,4 @@ __pycache__/**
 __pycache__/*
 *.zip
 *.DS_Store
+data_lob_bench.tar.gz
