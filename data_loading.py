@@ -5,7 +5,53 @@ import glob
 from dataclasses import dataclass
 
 
-def load_message_df(m_f: str) -> pd.DataFrame:
+def get_price_range_for_level(
+        book: pd.DataFrame,
+        lvl: int
+    ) -> pd.DataFrame:
+    assert lvl > 0
+    assert lvl <= (book.shape[1] // 4)
+    p_range = book[[(lvl-1) * 4, (lvl-1) * 4 + 2]].copy()
+    p_range.columns = ['p_max', 'p_min']
+    # replace -1 nan value with same nan values used in lobster data
+    p_range.p_max = p_range.p_max.replace(-1, 9999999999)
+    p_range.p_min = p_range.p_min.replace(-1, -9999999999)
+    return p_range
+
+def filter_by_lvl(
+        messages: pd.DataFrame,
+        book: pd.DataFrame,
+        lvl: int
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+
+    assert messages.shape[0] == book.shape[0]
+    book = book.iloc[:, :lvl * 4]
+    p_range = get_price_range_for_level(book, lvl)
+    messages = messages[(messages.price <= p_range.p_max) & (messages.price >= p_range.p_min)]
+    book = book.loc[messages.index]
+    return messages, book
+
+def cut_data_to_lvl(in_path, out_path, lvl, overwrite=False):
+    if not overwrite and (in_path == out_path):
+        raise ValueError('in_path and out_path are the same, set overwrite=True to overwrite files')
+
+    book_paths = sorted(glob.glob(in_path + '*orderbook*.csv'))
+    message_paths = sorted(glob.glob(in_path + '*message*.csv'))
+    assert len(book_paths) == len(message_paths)
+
+    for m_f, b_f in zip(message_paths, book_paths):
+        b = load_book_df(b_f)
+        m = load_message_df(m_f, parse_time=False)
+        # print('before', m.shape, b.shape)
+
+        m, b = filter_by_lvl(m, b, lvl)
+        # print('after', m.shape, b.shape)
+        # print('save to', out_path + m_f.rsplit('/', 1)[1])
+        # print()
+        m.to_csv(out_path + m_f.rsplit('/', 1)[1], header=None, index=None)
+        b.to_csv(out_path + b_f.rsplit('/', 1)[1], header=None, index=None)
+
+def load_message_df(m_f: str, parse_time: bool = True) -> pd.DataFrame:
     cols = ['time', 'event_type', 'order_id', 'size', 'price', 'direction']
     messages = pd.read_csv(
         m_f,
@@ -13,7 +59,6 @@ def load_message_df(m_f: str) -> pd.DataFrame:
         usecols=cols,
         index_col=False,
         dtype={
-            #'time': 'float64',
             'time': str,
             'event_type': 'int32',
             'order_id': 'int32',
@@ -22,7 +67,8 @@ def load_message_df(m_f: str) -> pd.DataFrame:
             'direction': 'int32'
         }
     )
-    messages.time = messages.time.apply(lambda x: Decimal(x))
+    if parse_time:
+        messages.time = messages.time.apply(lambda x: Decimal(x))
     return messages
 
 def load_book_df(b_f: str) -> pd.DataFrame:
@@ -215,21 +261,21 @@ class Simple_Loader():
             cond_data_path: str
         ) -> None:
         # load sample lobster data
-        real_message_paths = glob.glob(real_data_path + '/*message*.csv')
-        real_book_paths = glob.glob(real_data_path + '/*orderbook*.csv')
+        real_message_paths = sorted(glob.glob(real_data_path + '/*message*.csv'))
+        real_book_paths = sorted(glob.glob(real_data_path + '/*orderbook*.csv'))
         if len(real_book_paths) == 0:
             real_book_paths = [None] * len(real_message_paths)
 
         self.paths = []
         for rmp, rbp, in zip(real_message_paths, real_book_paths):
             _, _, after = rmp.partition('real_id_')
-            real_id = after.split('_')[0]
+            real_id = after.split('_')[0].split('.')[0]
 
-            gen_messsage_paths = glob.glob(gen_data_path + f'/*message*real_id_{real_id}*gen_id*.csv')
-            gen_book_paths = glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}*gen_id*.csv')
+            gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}*gen_id*.csv'))
+            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}*gen_id*.csv'))
 
-            cond_message_path = glob.glob(cond_data_path + f'/*message*real_id_{real_id}*.csv')
-            cond_book_path = glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}*.csv')
+            cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}*.csv'))
+            cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}*.csv'))
             
             if len(cond_message_path) == 0:
                 cond_message_path = None

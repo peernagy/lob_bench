@@ -23,7 +23,17 @@ def flatten(l, ltypes=(list, tuple)):
             else:
                 l[i:i + 1] = l[i]
         i += 1
-    return ltype(l)
+    # return ltype(l)
+    # return np.array(tuple(l)).flatten()
+    return np.hstack(l)#, casting='safe')
+
+def _get_duplicates(x):
+    return np.insert(x[1:] == x[:-1], 0, np.array(False))
+
+def _remove_multiple_duplicates(x: np.array):
+    is_duplicated = _get_duplicates(x)
+    is_duplicated_multiple = np.insert(is_duplicated[1:] & is_duplicated[:-1], 0, np.array(False))
+    return x[~is_duplicated_multiple]
 
 def get_subseqs(
         seq: data_loading.Lobster_Sequence,
@@ -190,44 +200,72 @@ def group_by_score(
         n_bins: Optional[int] = None,
         quantiles: Optional[list[float]] = None,
         thresholds: Optional[list[float]] = None,
-    ) -> list:
+        return_thresholds: bool = False,
+        discrete: bool = False,
+    ) -> tuple[list[float], list[float]]:
     """
     """
-    all_scores = np.concatenate((flatten(scores_real), flatten(scores_gen)))
+
+    all_scores = np.concatenate((
+        flatten(scores_real),
+        flatten(scores_gen)
+    ), casting='safe')
+    # all_scores = np.concatenate((
+    #     np.array(flatten(scores_real)).flatten(),
+    #     np.array(flatten(scores_gen)).flatten()
+    # ))
     
     min_score, max_score = all_scores.min(), all_scores.max()
-    if n_bins is not None:
-        thresholds = np.linspace(min_score, max_score, n_bins+1)
-    elif quantiles is not None:
-        thresholds = np.concatenate([[min_score], np.quantile(all_scores, quantiles), [max_score]])
-    elif thresholds is not None:
-        thresholds = np.concatenate([[min_score], thresholds, [max_score]])
+    if discrete:
+        thresholds = np.unique(all_scores)
     else:
-        raise ValueError("Must provide either n_bins, quantiles, or thresholds.")
+        if n_bins is not None:
+            # thresholds = np.linspace(min_score, max_score, n_bins+1)
+            thresholds = np.linspace(min_score, max_score, n_bins+1)[1:-1]
+        elif quantiles is not None:
+            # thresholds = np.concatenate([[min_score], np.quantile(all_scores, quantiles), [max_score]])
+            thresholds = np.quantile(all_scores, quantiles)
+            # remove thresholds occuring more than 2x
+            thresholds = _remove_multiple_duplicates(thresholds)
+            # add a very small delta to the last repeated threshold to make grouping work
+            thresholds[_get_duplicates(thresholds)] += 1e-2
+        elif thresholds is not None:
+            # thresholds = np.concatenate([[min_score], thresholds, [max_score]])
+            pass
+        else:
+            raise ValueError("Must provide either n_bins, quantiles, or thresholds.")
     
     # print(thresholds)
     
     # assert isinstance(scores_gen[0], Iterable), "scores_gen must be an iterable of iterables."
     # subsequences
-    if isinstance(scores_real[0], list):
+    # if isinstance(scores_real[0], list):
+    if hasattr(scores_real[0], '__iter__'):
         groups_real = [
-            np.searchsorted(thresholds, sr, side='right') - 1
+            # np.searchsorted(thresholds, sr, side='right') - 1
+            np.searchsorted(thresholds, sr, side='right')
             for sr in scores_real
         ]
         groups_gen = [
-            np.searchsorted(thresholds, sg_subseq, side='right') - 1
+            # tuple(np.searchsorted(thresholds, sg_subseq, side='right') - 1 for sg_subseq in sg_i)
+            tuple(np.searchsorted(thresholds, sg_subseq, side='right') for sg_subseq in sg_i)
             for sg_i in scores_gen
-            for sg_subseq in sg_i
         ]
     # single (real) sequence
     else:
-        groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
+        # groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
+        groups_real = np.searchsorted(thresholds, scores_real, side='right')
         groups_gen = [
-            np.searchsorted(thresholds, sg_i, side='right') - 1
+            # np.searchsorted(thresholds, sg_i, side='right') - 1
+            np.searchsorted(thresholds, sg_i, side='right')
             for sg_i in scores_gen
         ]
     
-    return groups_real, groups_gen
+    if return_thresholds:
+        thresholds = np.concatenate([[min_score], thresholds, [max_score]])
+        return groups_real, groups_gen, thresholds
+    else:
+        return groups_real, groups_gen
 
 def group_by_subseq(
         subseqs: Iterable[data_loading.Lobster_Sequence],
@@ -250,19 +288,33 @@ def get_score_table(
     ) -> pd.DataFrame:
     """
     """
-    real_data = [
-        (sr, g, 'real') \
-            for scores_i, groups_i in zip(scores_real, groups_real) \
-                for sr, g in zip(scores_i, groups_i)
-    ]
-    gen_data = [
-        (sg, g, 'generated') \
-            for scores_i, groups_i in zip(scores_gen, groups_gen) \
-                for scores_ij, groups_ij in zip(scores_i, groups_i) \
-                    for sg, g in zip(scores_ij, groups_ij)
-            # for sg_i, g in zip(scores_gen, groups) \
-            #     for sg in sg_i
-    ]
+    if hasattr(scores_real[0], '__iter__'):
+        real_data = [
+            (sr, g, 'real') \
+                for scores_i, groups_i in zip(scores_real, groups_real) \
+                    for sr, g in zip(scores_i, groups_i)
+        ]
+    else:
+        real_data = [
+            (sr, g, 'real') \
+                for sr, g in zip(scores_real, groups_real) \
+        ]
+
+    if hasattr(scores_gen[0][0], '__iter__'):
+        gen_data = [
+            (sg, g, 'generated') \
+                for scores_i, groups_i in zip(scores_gen, groups_gen) \
+                    for scores_ij, groups_ij in zip(scores_i, groups_i) \
+                        for sg, g in zip(scores_ij, groups_ij)
+
+        ]
+    else:
+        gen_data = [
+            (sg, g, 'generated') \
+                for scores_i, groups_i in zip(scores_gen, groups_gen) \
+                    for sg, g in zip(scores_i, groups_i) \
+        ]
+
     data = real_data + gen_data
     df = pd.DataFrame(data, columns=['score', 'group', 'type'])
     return df

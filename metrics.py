@@ -12,9 +12,12 @@ def l1_by_group(score_df: pd.DataFrame) -> float:
     Takes a "score dataframe" with columns score (real numbers), group (+int), type ("real" or "generated")
     Returns the mean L1 distance between the number of scores in each group for the real and generated data.
     """
+    if 'generated' not in score_df['type'].values:
+        return 1.
     group_counts = score_df.groupby(['type', 'group']).count()
     group_counts = pd.merge(group_counts.loc['real'], group_counts.loc['generated'], on='group')
-    return (group_counts.score_x - group_counts.score_y).abs().mean()
+    group_counts /= group_counts.sum(axis=0)
+    return (group_counts.score_x - group_counts.score_y).abs().sum() / 2.
 
 # TODO: Implement way to estimate KL based on samples from continuous distributions
 #       e.g. using KDE, fitting densities (check empirical distribution shapes - normal?)

@@ -65,45 +65,45 @@ from pandas.tseries.offsets import DateOffset
 import statsmodels.api as sm
 
 
-def compute_metrics(loader):
-    """DEPRECATED"""
-    def _compute_seq_metrics(m, b):
-        report_interval = '5min'
+# def compute_metrics(loader):
+#     """DEPRECATED"""
+#     def _compute_seq_metrics(m, b):
+#         report_interval = '5min'
 
-        ask_limit_depth, bid_limit_depth = limit_order_depth(m, b)
-        ask_cancel_depth, bid_cancel_depth = cancellation_depth(m, b)
-        ask_limit_levels, bid_limit_levels = limit_order_levels(m, b)
-        ask_cancel_levels, bid_cancel_levels = cancel_order_levels(m, b)
+#         ask_limit_depth, bid_limit_depth = limit_order_depth(m, b)
+#         ask_cancel_depth, bid_cancel_depth = cancellation_depth(m, b)
+#         ask_limit_levels, bid_limit_levels = limit_order_levels(m, b)
+#         ask_cancel_levels, bid_cancel_levels = cancel_order_levels(m, b)
 
-        metrics = (
-            mean_per_interval(spread(m, b), report_interval),
-            mean_per_interval(mid_returns(m, b, '1min'), report_interval),
+#         metrics = (
+#             mean_per_interval(spread(m, b), report_interval),
+#             mean_per_interval(mid_returns(m, b, '1min'), report_interval),
 
-            # autocorr(mid_returns(m, b, '1min'), lags=1),
-            # autocorr(mid_returns(m, b, '1min')**2, lags=10),
+#             # autocorr(mid_returns(m, b, '1min'), lags=1),
+#             # autocorr(mid_returns(m, b, '1min')**2, lags=10),
             
-            # time_to_first_fill(m),
-            # time_to_cancel(m),
+#             # time_to_first_fill(m),
+#             # time_to_cancel(m),
             
-            mean_per_interval(l1_volume(m, b), report_interval),
-            mean_per_interval(total_volume(m, b, 10), report_interval),
-            mean_per_interval(ask_limit_depth, report_interval),
-            mean_per_interval(bid_limit_depth, report_interval),
-            mean_per_interval(ask_cancel_depth, report_interval),
-            mean_per_interval(bid_cancel_depth, report_interval),
-            mean_per_interval(ask_limit_levels, report_interval),
-            mean_per_interval(bid_limit_levels, report_interval),
-            mean_per_interval(ask_cancel_levels, report_interval),
-            mean_per_interval(bid_cancel_levels, report_interval),
-        )
-        metrics = pd.concat(metrics, axis=1)
-        return metrics
+#             mean_per_interval(l1_volume(m, b), report_interval),
+#             mean_per_interval(total_volume(m, b, 10), report_interval),
+#             mean_per_interval(ask_limit_depth, report_interval),
+#             mean_per_interval(bid_limit_depth, report_interval),
+#             mean_per_interval(ask_cancel_depth, report_interval),
+#             mean_per_interval(bid_cancel_depth, report_interval),
+#             mean_per_interval(ask_limit_levels, report_interval),
+#             mean_per_interval(bid_limit_levels, report_interval),
+#             mean_per_interval(ask_cancel_levels, report_interval),
+#             mean_per_interval(bid_cancel_levels, report_interval),
+#         )
+#         metrics = pd.concat(metrics, axis=1)
+#         return metrics
 
-    for m_real, b_real, m_gen, b_gen in loader:
-        # calculate metrics
-        real_metrics = _compute_seq_metrics(m_real, b_real)
-        # TODO: also calculate metrics for generated data and combine data overview
-        return real_metrics
+#     for m_real, b_real, m_gen, b_gen in loader:
+#         # calculate metrics
+#         real_metrics = _compute_seq_metrics(m_real, b_real)
+#         # TODO: also calculate metrics for generated data and combine data overview
+#         return real_metrics
 
 def mean_per_interval(
         series: pd.Series, 
@@ -303,6 +303,7 @@ def _order_levels(
         messages: pd.DataFrame,
         book: pd.DataFrame,
         event_types: tuple[int],
+        verify_orders: bool = False,
     ) -> tuple[pd.Series, pd.Series]:
     """
     Get levels of given order types.
@@ -312,17 +313,23 @@ def _order_levels(
         assert not 1 in event_types, \
             "Order levels for cancellations and modifications refer to the previous book state and are hence not compatible with new orders."
         # look at previous book state for cancellations and modifications
-        book = book.shift(1)
+        book = book.shift(1).iloc[1:]
+        messages = messages.iloc[1:]
 
     order_prices = messages[messages.event_type.isin(event_types)]
     level_prices = book.loc[order_prices.index, 0::2]
     order_prices.index = order_prices.time
     order_prices = order_prices.price
+    # print('order_prices', order_prices.shape, order_prices)
+    # print('level_prices', level_prices.shape, level_prices)
     lvl_idx = np.argwhere((order_prices.values == level_prices.values.T).T)
-    assert lvl_idx.shape[0] == order_prices.shape[0], f"Not all order prices found in book. ({lvl_idx.shape[0]} != {order_prices.shape[0]})"
+    if verify_orders:
+        assert lvl_idx.shape[0] == order_prices.shape[0], f"Not all order prices found in book. ({lvl_idx.shape[0]} != {order_prices.shape[0]})"
     # lvl_idx = pd.Series(lvl_idx[:, 0], index=lvl_idx[:, 1])
     # print('lvl_idx', lvl_idx)
-    lvl_idx = pd.Series(lvl_idx[:, 1], index=order_prices.index)
+    # lvl_idx = pd.Series(lvl_idx[:, 1], index=order_prices.index)
+    lvl_idx = pd.Series(lvl_idx[:, 1], index=lvl_idx[:, 0])
+    # display(lvl_idx)
     # print('index', order_prices.index)
 
     bid_lvl_mask = (lvl_idx % 2 == 1)
@@ -352,3 +359,37 @@ def cancel_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.
     ask_levels.name = 'ask_cancel_level'
     bid_levels.name = 'bid_cancel_level'
     return ask_levels, bid_levels
+
+def compute_3d_book_changes(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
+    """
+    Compute changes in book state with every message, expressed as (change in mid-price, change at which relative price, change in volume).
+    """
+    mid = mid_price(messages, book)
+
+    # calculate changes in book state
+    mid_diff = mid.diff()
+    mid_diff.name = 'mid_change'
+    # display(mid_diff)
+    # display(messages.price)
+
+    messages = messages.copy()
+    messages.index = mid.index
+    messages.price = messages.price - mid
+    # most message types remove volume from the book...
+    messages['size'] *= -1
+    # except for new orders, which add volume:
+    messages.loc[messages.event_type == 1, 'size'] *= -1
+
+    return pd.concat([mid_diff, messages.price, messages['size']], axis=1)
+
+def compute_3d_book_groups(
+        book_3d: pd.DataFrame,
+        n_bins_per_dim: int,
+    ) -> pd.DataFrame:
+    """
+    """
+    book_3d_groups = pd.DataFrame()
+    book_3d_groups['mid_change'], mid_change_bins = pd.qcut(book_3d['mid_change'], n_bins_per_dim, duplicates='drop', retbins=True)
+    book_3d_groups['price'], price_bins = pd.qcut(book_3d['price'], n_bins_per_dim, duplicates='drop', retbins=True)
+    book_3d_groups['size'], size_bins = pd.qcut(book_3d['size'], n_bins_per_dim, duplicates='drop', retbins=True)
+    return book_3d_groups, [mid_change_bins, price_bins, size_bins]

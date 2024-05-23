@@ -1,3 +1,4 @@
+from typing import Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,6 +12,9 @@ def hist(
         title: str= '',
         xlabel: str= 'Group',
         ylabel: str= 'Score',
+        *,
+        bins: Optional[int|str|list[float]] = 'auto',
+        binwidth: Optional[float]= None,
     ):
     """
     """
@@ -24,11 +28,13 @@ def hist(
     sns.histplot(
         data, x='x', hue='type',
         alpha=0.5, stat='density', multiple='layer',
-        common_bins=True, common_norm=False
+        common_bins=True, common_norm=False, binwidth=binwidth, bins=bins
     )
     # sns.histplot(gen, color='red', alpha=0.5, label='Generated', ax=plt.gca())
     # plt.legend()
     _finish_plot(title, xlabel, ylabel)
+    if not isinstance(bins, str):
+        print(f'bins: {bins}')
 
 def scatter(
         score_df: pd.DataFrame,
