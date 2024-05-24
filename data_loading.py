@@ -105,16 +105,16 @@ class Lobster_Sequence():
             date: str,
             m_real: callable,
             b_real: callable,
-            # num_gen_series: tuple[int],
-            # m_gen: Optional[tuple[callable]] = None,
-            # b_gen: Optional[tuple[callable]] = None,
-            # m_cond: Optional[tuple[callable]] = None,
-            # b_cond: Optional[tuple[callable]] = None,
-            num_gen_series,
-            m_gen = None,
-            b_gen = None,
-            m_cond = None,
-            b_cond = None,
+            num_gen_series: tuple[int],
+            m_gen: Optional[tuple[callable]] = None,
+            b_gen: Optional[tuple[callable]] = None,
+            m_cond: Optional[tuple[callable]] = None,
+            b_cond: Optional[tuple[callable]] = None,
+            # num_gen_series,
+            # m_gen = None,
+            # b_gen = None,
+            # m_cond = None,
+            # b_cond = None,
             # NOTE uncomment this return back when publish, 
             # tuple[int] cannot be recognized on my env 
             # it was commented for easy tesging.
@@ -306,8 +306,8 @@ class Simple_Loader():
     def __len__(self) -> int:
         return len(self.paths)
 
-    def __getitem__(self, i: int):
-    # def __getitem__(self, i: int) -> tuple[pd.DataFrame, pd.DataFrame, tuple[pd.DataFrame], Optional[tuple[pd.DataFrame]]]:
+    # def __getitem__(self, i: int):
+    def __getitem__(self, i: int) -> tuple[pd.DataFrame, pd.DataFrame, tuple[pd.DataFrame], Optional[tuple[pd.DataFrame]]]:
         """ Get 1 real and N generated dataframes for a given period
             Returns: real_messages, real_book, tuple(gen_messages), [tuple(gen_books)]
             The generated book files are optional and will be calculated from messages using JaxLob simulator if not provided.
