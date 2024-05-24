@@ -1,0 +1,7 @@
+**.pyc
+**.json
+__pycache__/**
+/data_lob_bench/*
+__pycache__/*
+*.zip
+*.DS_Store
