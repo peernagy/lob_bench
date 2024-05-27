@@ -167,6 +167,19 @@ def mid_returns(
 
     return ret
 
+def volatility(
+        messages: pd.DataFrame,
+        book: pd.DataFrame,
+        interval: Union[DateOffset, timedelta, str] = '1min',
+    ) -> pd.Series:
+    """
+    """
+    r = mid_returns(messages, book, interval)
+    std = r.std()
+    if np.isnan(std):
+        return 0.
+    return std
+
 def autocorr(
         returns: pd.Series,
         lags: int = 1,
@@ -182,6 +195,25 @@ def autocorr(
         alpha=alpha
     )
 
+def time_of_day(messages: pd.DataFrame) -> pd.Series:
+    """
+    Get time of day in seconds.
+    """
+    sod = messages.time.iloc[0].replace(hour=0, minute=0, second=0, microsecond=0)
+    return (messages.time - sod).dt.total_seconds()
+
+def start_date_time(messages: pd.DataFrame) -> pd.Timestamp:
+    """
+    Get start time of data.
+    """
+    return messages.time.iloc[0]
+
+def start_time(messages: pd.DataFrame) -> pd.Timestamp:
+    """
+    Get start time of data.
+    """
+    dt = start_date_time(messages)
+    return (dt - dt.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
 
 def time_to_first_fill(messages: pd.DataFrame) -> pd.Series:
     """
