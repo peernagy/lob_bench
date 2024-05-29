@@ -11,6 +11,7 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
                                 book_sequence: pd.DataFrame,
                                 ordersize: Tuple[int,int],
                                 orderside: int,
+                                ordertype:int,
                                 timestamp :Tuple[str,str] = None,
                                 sequence_length:int=100,):
     """Given an input sequence of LOBSTER messages and L2 orderbook data, of undetermined length. 
@@ -33,6 +34,7 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
     if timestamp is None:
         impact_msgs=message_sequence.loc[(message_sequence['size']>ordersize[0])
                                          &(message_sequence['size']<ordersize[1])
+                                         &(message_sequence['event_type']<ordertype)
                                          &(message_sequence['direction']==orderside)]
     else:
         message_sequence['time']=message_sequence['time'].map(Decimal)
@@ -40,6 +42,7 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
                 & (message_sequence['time']>=Decimal(timestamp[0])))
         impact_msgs=message_sequence.loc[(message_sequence['size']>=ordersize[0])
                                         &(message_sequence['size']<=ordersize[1])
+                                        &(message_sequence['event_type']<ordertype)
                                         & (message_sequence['direction']==orderside)
                                         & (message_sequence['time']<=Decimal(timestamp[1]))
                                         & (message_sequence['time']>=Decimal(timestamp[0]))]
@@ -51,6 +54,49 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
     filtered_messages=message_sequence.loc[sequence_indices]
     filtered_books=book_sequence.loc[sequence_indices]
     return filtered_messages,filtered_books
+
+
+def s_autocorr(lag, eps_sequence):
+    """Calculates autocorrelation of adjusted sign 's' which is sign 'eps' except for LOs which are reveresed"
+    """
+
+    """if MO, CA, s = eps
+        elif LO s = -eps"""
+
+    """ should decay with lag^-0.7"""
+    return 0
+
+
+def event_cross_corr(event1, event2, lag, sequence):
+    """Equation 13 from the paper.
+    """
+    return 0 
+
+def u_event_corr(event1, event2,lag,  sequence):
+    """Equation 14 from the paper.
+    """
+    return 0 
+
+def response_func(event, lag, sequence):
+    "Equation 15 from the paper"
+
+    return 0 
+
+
+def G_fun(diff_t, gamma, event):
+    """Assuming autocorr of signs: C(l)=<eps_t, eps_t+l> decays with a power law following l^-gamma (gamma=0.7 empirically)
+        Then this function should decay according to abs(diff_t)^-beta where:
+            beta = (1-gamma)/2 and diff_t is the difference in time between current price studied and t' the time at which
+                a previous event took place.
+                
+        Extended to be event dependant (discrete), depends on the event at t' """
+    
+    """cannot actually be calculated directly, calculated by solving system of equations in 17... in matrix form"""
+
+def matrix_A(sequence):
+    """equation 19 from paper"""
+
+    return 0
 
 
 
