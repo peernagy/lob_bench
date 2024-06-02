@@ -132,7 +132,6 @@ class Lobster_Sequence():
         else:
             self.b_real = b_real
         
-        print(m_gen)
         if m_gen is not None:
             if callable(m_gen[0]):
                 self._m_gen = m_gen
