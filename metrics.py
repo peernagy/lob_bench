@@ -123,23 +123,26 @@ def kl_divergence_kde(a, b):
     Returns:
         float: The KL divergence between the two datasets.
     """
+
+    import scipy
+
     N = a.shape[0]
     M = b.shape[0]
     K = a.shape[1]
     assert a.shape[1] == b.shape[1]    
 
-    # Fit KDE models
-    kde_a = KernelDensity(kernel='gaussian', bandwidth=0.1).fit(a)
-    kde_b = KernelDensity(kernel='gaussian', bandwidth=0.1).fit(b)
+    # Fit KDE models with adjusted bandwidth
+    kde_a = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(a)
+    kde_b = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(b)
 
     # Generate evaluation points based on the average number of samples
-    num_points = int(np.mean([N, M]) * 10)
-    # x = np.linspace(0, 1, 1000)
-    x = np.linspace(0, 1, num_points)
+    num_points = int(np.mean([N, M]) * 50)  # Increased the number of points
+    x_min = min(a.min(), b.min()) - 1
+    x_max = max(a.max(), b.max()) + 1
+    x = np.linspace(x_min, x_max, num_points)
 
     # Generate a grid of K-dimensional points for PDF evaluation
     grid = np.array(np.meshgrid(*([x] * K))).T.reshape(-1, K)
-    
 
     log_pdf_a = kde_a.score_samples(grid)
     log_pdf_b = kde_b.score_samples(grid)
@@ -159,7 +162,6 @@ def kl_divergence_kde(a, b):
     # Calculate KL divergence
     kl_div = scipy.stats.entropy(pdf_a, pdf_b)
 
-    # print("KL Divergence:", kl_div)
     return kl_div
 
 
