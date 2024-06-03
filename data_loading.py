@@ -132,7 +132,6 @@ class Lobster_Sequence():
         else:
             self.b_real = b_real
         
-        print(m_gen)
         if m_gen is not None:
             if callable(m_gen[0]):
                 self._m_gen = m_gen
@@ -280,11 +279,13 @@ class Simple_Loader():
             _, _, after = rmp.partition('real_id_')
             real_id = after.split('_')[0].split('.')[0]
 
-            gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}*gen_id*.csv'))
-            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}*gen_id*.csv'))
+            
+            gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}_gen_id_*.csv'))
+            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}_gen_id_*.csv'))
 
-            cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}*.csv'))
-            cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}*.csv'))
+
+            cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}.csv'))
+            cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}.csv'))
             
             if len(cond_message_path) == 0:
                 cond_message_path = None
@@ -315,7 +316,6 @@ class Simple_Loader():
         """
 
         date, rmp, rbp, gmp, gbp, cmp, cbp = self.paths[i]
-        print(self.paths[i])
 
         def m_real():
             m = load_message_df(rmp)

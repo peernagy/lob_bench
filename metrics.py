@@ -19,17 +19,70 @@ def wasserstein(p, q):
     p, q = flatten(p), flatten(q)
     return stats.wasserstein_distance(p, q)
 
-def l1_by_group(score_df: pd.DataFrame) -> float:
+def l1_by_group(
+        score_df: pd.DataFrame,
+        bootstrap_ci: bool = True,
+        n_bootstrap: int = 100,
+        ci_alpha: float = 0.05,
+    ) -> float:
     """
-    Takes a "score dataframe" with columns score (real numbers), group (+int), type ("real" or "generated")
+    Takes a "score dataframe" with columns "score" (real numbers), "group" (+int), "type" ("real" or "generated")
     Returns the mean L1 distance between the number of scores in each group for the real and generated data.
     """
+    def _calc_l1(score_df: pd.DataFrame):
+        group_counts = score_df.groupby(['type', 'group']).count()
+        group_counts = pd.merge(
+            group_counts.loc['real'],
+            group_counts.loc['generated'],
+            on='group',
+            how='outer'
+        ).fillna(0)
+        group_counts = group_counts[['score_x', 'score_y']]
+        group_counts /= group_counts.sum(axis=0)
+        return (group_counts.score_x - group_counts.score_y).abs().sum() / 2.
+
     if 'generated' not in score_df['type'].values:
+        if bootstrap_ci:
+            return 1, np.ones(2)
         return 1.
-    group_counts = score_df.groupby(['type', 'group']).count()
-    group_counts = pd.merge(group_counts.loc['real'], group_counts.loc['generated'], on='group')
-    group_counts /= group_counts.sum(axis=0)
-    return (group_counts.score_x - group_counts.score_y).abs().sum() / 2.
+
+    l1 = _calc_l1(score_df)
+
+    # TODO: optimise this performance-wise
+    if bootstrap_ci:
+        l1s = [l1]
+        rng = np.random.default_rng(12345)
+        for i in range(n_bootstrap):
+            # print(i)
+            real_idx = score_df.loc[score_df['type'] == 'real'].index
+            n_real = len(real_idx)
+            generated_idx = score_df.loc[score_df['type'] == 'generated'].index
+            n_gen = len(generated_idx)
+
+            # draw bootstrap samples
+            
+            real_sample = score_df.loc[real_idx].iloc[rng.integers(0, n_real, size=n_real)]
+            
+            # randlist_gen = pd.DataFrame(index=np.random.randint(n_gen, size=n_gen))
+            # gen_sample = pd.merge(score_df.loc[generated_idx], randlist_gen, left_index=True, right_index=True, how='right')
+            
+            gen_sample = score_df.loc[generated_idx].iloc[rng.integers(0, n_gen, size=n_gen)]
+            
+            score_df_sampled = pd.concat([real_sample, gen_sample], axis=0)
+            # display(score_df)
+
+            l1s.append(_calc_l1(score_df_sampled))
+        l1s = np.array(l1s)
+        # display(l1s)
+
+        # get the 5. and 95. percentile of the bootstrapped L1 distances
+        q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+        l1_ci = np.percentile(l1s, q=q)
+
+        return l1, l1_ci, l1s
+    else:
+        return l1
+
 
 def ob3Drepr(orderbook, row_index):
     '''
