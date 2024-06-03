@@ -6,3 +6,9 @@ __pycache__/*
 *.zip
 *.DS_Store
 data_lob_bench.tar.gz
+eval2.ipynb
+kl_checking.ipynb
+__pycache__/data_loading.cpython-310.pyc
+__pycache__/eval.cpython-310.pyc
+__pycache__/impact.cpython-310.pyc
+__pycache__/partitioning.cpython-310.pyc
