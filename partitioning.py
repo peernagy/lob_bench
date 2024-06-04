@@ -182,7 +182,10 @@ def _score_seq(
         messages = seq.m_gen
         book = seq.b_gen
     if isinstance(messages, data_loading.Lazy_Tuple) or isinstance(messages, tuple):
-        if isinstance(messages[0], data_loading.Lazy_Tuple) or isinstance(messages[0], tuple):
+        if isinstance(messages[0], data_loading.Lazy_Tuple) \
+        or isinstance(messages[0], tuple) \
+        or isinstance(messages[0], list):
+            
             score = tuple(
                 tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(m_subseq, b_subseq)) \
                 for m_subseq, b_subseq in zip(messages, book) 
@@ -197,6 +200,7 @@ def group_by_score(
         scores_real: Iterable,
         scores_gen: Optional[Iterable[Iterable]] = [],
         *,
+        bin_method: Optional[str] = None,
         n_bins: Optional[int] = None,
         quantiles: Optional[list[float]] = None,
         thresholds: Optional[list[float]] = None,
@@ -210,16 +214,14 @@ def group_by_score(
         flatten(scores_real),
         flatten(scores_gen)
     ), casting='safe')
-    # all_scores = np.concatenate((
-    #     np.array(flatten(scores_real)).flatten(),
-    #     np.array(flatten(scores_gen)).flatten()
-    # ))
     
     min_score, max_score = all_scores.min(), all_scores.max()
     if discrete:
         thresholds = np.unique(all_scores)
     else:
-        if n_bins is not None:
+        if bin_method is not None:
+            thresholds = np.histogram_bin_edges(all_scores, bins=bin_method)
+        elif n_bins is not None:
             # thresholds = np.linspace(min_score, max_score, n_bins+1)
             thresholds = np.linspace(min_score, max_score, n_bins+1)[1:-1]
         elif quantiles is not None:
@@ -233,9 +235,7 @@ def group_by_score(
             # thresholds = np.concatenate([[min_score], thresholds, [max_score]])
             pass
         else:
-            raise ValueError("Must provide either n_bins, quantiles, or thresholds.")
-    
-    # print(thresholds)
+            raise ValueError("Must provide either bin_method, n_bins, quantiles, or thresholds.")
     
     # assert isinstance(scores_gen[0], Iterable), "scores_gen must be an iterable of iterables."
     # subsequences
@@ -281,40 +281,64 @@ def group_by_subseq(
     return groups_real, groups_gen
 
 def get_score_table(
-        scores_real: Iterable,
-        scores_gen: Iterable[Iterable],
-        groups_real: Iterable,
-        groups_gen: Iterable[Iterable],
+        scores_real: Optional[Iterable],
+        scores_gen: Optional[Iterable[Iterable]],
+        groups_real: Optional[Iterable],
+        groups_gen: Optional[Iterable[Iterable]],
     ) -> pd.DataFrame:
     """
     """
-    if hasattr(scores_real[0], '__iter__'):
-        real_data = [
-            (sr, g, 'real') \
-                for scores_i, groups_i in zip(scores_real, groups_real) \
-                    for sr, g in zip(scores_i, groups_i)
-        ]
-    else:
-        real_data = [
-            (sr, g, 'real') \
-                for sr, g in zip(scores_real, groups_real) \
-        ]
+    # use groups = scores if not provided
+    if (groups_real is None):
+        groups_real = scores_real
+    if (groups_gen is None):
+        groups_gen = scores_gen
 
-    if hasattr(scores_gen[0][0], '__iter__'):
-        gen_data = [
-            (sg, g, 'generated') \
-                for scores_i, groups_i in zip(scores_gen, groups_gen) \
-                    for scores_ij, groups_ij in zip(scores_i, groups_i) \
-                        for sg, g in zip(scores_ij, groups_ij)
+    # REAL DATA
+    if scores_real is not None:
+        scores_real_flat = flatten(scores_real)
+        groups_real_flat = flatten(groups_real)
+        assert len(scores_real_flat) == len(groups_real_flat), f"Length mismatch: {len(scores_real_flat)} != {len(groups_real_flat)}"
+        real_data = [(sg, g, 'real') for sg, g in zip(scores_real_flat, groups_real_flat)]
 
-        ]
+        if hasattr(scores_real[0], '__iter__'):
+            real_data = [
+                (sr, g, 'real') \
+                    for scores_i, groups_i in zip(scores_real, groups_real) \
+                        for sr, g in zip(scores_i, groups_i)
+            ]
+        else:
+            real_data = [
+                (sr, g, 'real') \
+                    for sr, g in zip(scores_real, groups_real) \
+            ]
     else:
-        gen_data = [
-            (sg, g, 'generated') \
-                for scores_i, groups_i in zip(scores_gen, groups_gen) \
-                    for sg, g in zip(scores_i, groups_i) \
-        ]
+        real_data = []
+
+    # GENERATED DATA
+    if scores_gen is not None:
+        # scores_gen_flat = flatten(scores_gen)
+        # groups_gen_flat = flatten(groups_gen)
+        # assert len(scores_gen_flat) == len(groups_gen_flat), f"Length mismatch: {len(scores_gen_flat)} != {len(groups_gen_flat)}"
+        # gen_data = [(sg, g, 'generated') for sg, g in zip(scores_gen_flat, groups_gen_flat)]
+        
+        if hasattr(scores_gen[0][0], '__iter__'):
+            gen_data = [
+                (sg, g, 'generated') \
+                    for scores_i, groups_i in zip(scores_gen, groups_gen) \
+                        for scores_ij, groups_ij in zip(scores_i, groups_i) \
+                            for sg, g in zip(scores_ij, groups_ij)
+
+            ]
+        else:
+            gen_data = [
+                (sg, g, 'generated') \
+                    for scores_i, groups_i in zip(scores_gen, groups_gen) \
+                        for sg, g in zip(scores_i, groups_i) \
+            ]
+    else:
+        gen_data = []
 
     data = real_data + gen_data
-    df = pd.DataFrame(data, columns=['score', 'group', 'type'])
+    df = pd.DataFrame(data, columns=['score', 'group', 'type']).explode('score')
     return df
