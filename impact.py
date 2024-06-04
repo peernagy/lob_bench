@@ -8,6 +8,11 @@ from decimal import Decimal
 from typing import Tuple
 from functools import partial
 import scipy.stats as st
+from data_loading import Simple_Loader
+import datetime
+import math
+from matplotlib import pyplot as plt
+import data_loading
 
 from collections import namedtuple
 ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
@@ -59,8 +64,6 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
     filtered_messages=message_sequence.loc[sequence_indices]
     filtered_books=book_sequence.loc[sequence_indices]
     return filtered_messages,filtered_books
-
-
 
 def filter_touch_events(m_df,b_df):
     indeces=(~b_df[[0, 1, 2,3]].diff().eq(0).all(axis=1) & m_df['event_type'].isin([1,2,3,4]))
@@ -121,7 +124,6 @@ def classify_event_types(big_df :pd.DataFrame):
     df['midprice']=((df[0]+df[2])/2).astype(int)
     return df
 
-
 def sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
     """Calculates autocorrelation of adjusted sign 's' which is sign 'eps' except for LOs which are reveresed"
     """
@@ -132,8 +134,6 @@ def sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
     """ should decay with lag^-0.7"""
     mult=sequence[sign]*sequence[sign].shift(periods=-lag)
     return mult
-
-
 
 def event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
     """Equation 13 from the paper.
@@ -181,6 +181,15 @@ def apply_to_seqs(fun,CI,args,sequences:list):
         ci=ConfidenceInterval(0,0)
     return metrics.mean(),ci
 
+def merge_MOs(test_df:pd.DataFrame):
+    gb=test_df.groupby(
+        ((test_df['time'].diff()>datetime.timedelta(milliseconds=1)) |
+        (test_df['event_type']!=4) |
+        (test_df['direction']!=test_df['direction'].shift(1))).cumsum())
+    cols=test_df.columns.difference(['size'])
+    final=gb.agg({'size': "sum"}).join(gb[cols].last())
+    return final
+
 
 #Skip, or TODO at some other point. 
 def matrix_A(sequence):
@@ -188,10 +197,176 @@ def matrix_A(sequence):
     return 0
 
 
+def apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
+    print(args[1],end="\r")
+    metrics_real=[]
+    metrics_gen=[]
+    for i in range(0,min(max_seq,len(loader))):
+        real_df=classify_event_types(
+                        merge_MOs(
+                        filter_touch_events(loader[i].m_real,loader[i].b_real)))
+        metr=fun(*args,real_df)
+        metrics_real.append(metr)
 
+        for j,mgen in enumerate(loader[i].m_gen):
+            gen_df=classify_event_types(
+                        merge_MOs(
+                        filter_touch_events(mgen,loader[i].b_gen[j])))
+            metr=fun(*args,gen_df)
+            metrics_gen.append(metr)
+    metrics_real=pd.concat(metrics_real,axis=0)
+    metrics_gen=pd.concat(metrics_gen,axis=0)
+    results=[]
+    for metrics in [metrics_real,metrics_gen]:
+        array_metrics=np.array(metrics[~np.isnan(metrics)])
+        unique=np.unique(array_metrics).shape[0]
+        if unique>1:
+            res=st.bootstrap((array_metrics,),np.mean,confidence_level=0.90,n_resamples=1000,method='basic')
+            ci=res.confidence_interval
+        else:
+            ci=ConfidenceInterval(0,0)
+        results.append((metrics.mean(),ci))
+    return results[0],results[1]
+
+
+def impact_compare(loader:Simple_Loader):
+    x=(10** np.arange(0.3,2.4,step=0.1)).astype(int)
+    events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
+    ys_real=[]
+    ys_gen=[]
+    confidence_ints_real=[]
+    confidence_ints_gen=[]
+    for event in events:
+        print("Calculating for event type: ", event)
+        r,g=zip(*[apply_to_Sequences(response_func,0.975,5000,(event,i),loader) for i in x])
+        r_m,r_ci=zip(*r)
+        g_m,g_ci=zip(*g)
+        ys_real.append(np.array(r_m))
+        ys_gen.append(np.array(g_m))
+        confidence_ints_gen.append(g_ci)
+        confidence_ints_real.append(r_ci)
+
+    plot_linlog_subplots(x,[ys_real,ys_gen],[confidence_ints_real,confidence_ints_gen],
+                     legend=events,
+                     suptitle="Tick-normalised microscopic response functions for stock ticker: GOOG",
+                     titles=["Real Data Sequences","Generated Data Sequences"],
+                     ylabel="Rπ (ticks)")
+
+
+    diff={}
+    for i,event in enumerate(events):
+        delta=np.sum(np.abs(ys_real[i]-ys_gen[i]))
+        print("Sum of abs differences for ",event," events:",delta)
+        diff[event]=delta
+        
+    return np.mean(np.array(list(diff.values())))
+    
+
+
+def impact_analyse(m_seqs,b_seqs):
+    mb_seqs=[filter_touch_events(m,b) for m,b in zip(m_seqs,b_seqs)]
+    df_seqs_mos=[merge_MOs(df) for df in mb_seqs]
+    df_seqs=[classify_event_types(df) for df in df_seqs_mos]
+    temp=df_seqs[0][0].diff().abs()
+    ticksize=temp[temp>0].min()
+
+    x=(10** np.arange(0,3,step=0.1)).astype(int)
+    events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
+    ys=[]
+    confidence_ints=[]
+    for event in events:
+        print("Calculating for event type: ", event)
+        mean,cis=zip(*[apply_to_seqs(response_func,(event,i),df_seqs) for i in x])
+        ys.append(np.array(mean))
+        confidence_ints.append(cis)
+
+    plot_linlog(x,ys,confidence_ints,legend=events,
+            title="Response functions real data",
+            ylabel="P_response")
+
+
+
+
+
+#PLotting utilities
+def plot_loglog(x,ys,errs,legend,colors=['b','r','g','c','m','y'],title="Title",loglog=None,ylabel="y_axis_replace",invert=False):
+    fig = plt.figure()
+    ax = plt.gca()
+    ys_lims=(0,0.1)
+    for i,y in enumerate(ys):
+        #ax.scatter(x,y,marker='x',color=colors[i])
+        ax.plot(x, y,'--',color=colors[i],lw=0.4,marker='x')
+    if errs is not None:
+            ax.fill_between(x,y-errs[i],y+errs[i],alpha=0.1,label='_nolegend_')
+            ys_lims=(min(ys_lims[0],np.min(y)),max(ys_lims[1],np.max(y)))
+
+    if loglog is not None:
+        ax.loglog(x,np.power(x,-loglog),color='k')
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+    ax.legend(legend)
+    ax.set_title(title)
+    ax.set_xlabel("Lag")
+    ax.set_ylabel(ylabel)
+    if errs is not None:
+        ax.set_ylim(np.array(ys_lims)*1.2)
+    if invert:
+        ax.invert_yaxis()
+
+
+def plot_linlog(x,ys,errs,legend,colors=['b','r','g','c','m','y'],title="Title",loglog=None,ylabel="y_axis_replace"):
+    fig = plt.figure()
+    ax = plt.gca()
+    ys_lims=(-0.1,0.1)
+    for i,y in enumerate(ys):
+        #ax.scatter(x,y,marker='x',color=colors[i])
+        print()
+        ax.plot(x, y,'--',color=colors[i],lw=0.4,marker='x')
+        ax.fill_between(x,np.array(errs[i])[:,0],np.array(errs[i])[:,1],alpha=0.1,label='_nolegend_')
+        ys_lims=(min(ys_lims[0],np.min(y)),max(ys_lims[1],np.max(y)))
+        
+
+    if loglog is not None:
+        ax.loglog(x,np.power(x,-loglog),color='k')
+    ax.set_xscale('log')
+    ax.legend(legend)
+    ax.set_title(title)
+    ax.set_xlabel("Lag")
+    ax.set_ylabel(ylabel)
+    ax.set_ylim(np.array(ys_lims)*1.2)
+
+def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace"):
+    fig,axarr = plt.subplots(1,len(ys),sharey=True)
+    plt.subplots_adjust(wspace=0.05)
+    fig.set_figwidth(12)
+    ys_lims=(-0.1,0.1)
+    markers=['x','+']
+    for a,ax in enumerate(axarr):
+        for i,y in enumerate(ys[a]):
+            c=colors[math.floor(i/2)]
+            m=markers[i%2]
+            #ax.scatter(x,y,marker='x',color=colors[i])
+            ax.plot(x, y,'--',color=c,lw=0.4,marker=m,)
+            ax.fill_between(x,np.array(errs[a][i])[:,0],np.array(errs[a][i])[:,1],alpha=0.1,label='_nolegend_',color=c)
+            ys_lims=(min(ys_lims[0],np.min(y)),max(ys_lims[1],np.max(y)))
+            
+
+        if loglog is not None:
+            ax.loglog(x,np.power(x,-loglog),color='k')
+        ax.set_xscale('log')
+        ax.legend(legend)
+        ax.set_title(titles[a])
+        ax.set_xlabel("Events lag (l)")
+    axarr[0].set_ylabel(ylabel)
+    for a in axarr:
+        ax.set_ylim(np.array(ys_lims)*1.2)
+    fig.suptitle(suptitle)
+    fig.savefig('compare.png', dpi=fig.dpi)
 
  
 #USe the below for macro impact generative loop. 
+
+
 
 
 def get_impact_message(
@@ -227,3 +402,12 @@ def get_cleanup_message(
 
 
 
+if __name__ == '__main__':
+    root_path="/data1/sascha/data/GOOG/"
+
+    loader = data_loading.Simple_Loader(
+            real_data_path= root_path+"data_real",
+            gen_data_path= root_path+"data_gen",
+            cond_data_path=root_path+"data_cond",
+)
+    impact_compare(loader)
