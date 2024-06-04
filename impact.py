@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 from decimal import Decimal
 from typing import Tuple
+from functools import partial
+import scipy.stats as st
+
+from collections import namedtuple
+ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
 
 def filter_sequence_for_impact(message_sequence : pd.DataFrame,
                                 book_sequence: pd.DataFrame,
@@ -62,10 +67,10 @@ def filter_touch_events(m_df,b_df):
     m_df=m_df.loc[indeces]
     b_df=b_df.loc[indeces]
     #FIXME: Should really ensure that the market orders within a ms are collapsed into one. pg.1400 of paper.
-    return m_df,b_df
-
-def classify_event_types(m_df :pd.DataFrame,b_df:pd.DataFrame):
     big_df=pd.concat([m_df,b_df],axis=1)
+    return big_df
+
+def classify_event_types(big_df :pd.DataFrame):
     big_df['askprice_diff']=big_df[0].diff()
     big_df['bidprice_diff']=big_df[2].diff()
 
@@ -74,7 +79,7 @@ def classify_event_types(m_df :pd.DataFrame,b_df:pd.DataFrame):
          if series['event_type']==1:
              return {'eps':series['direction'],'s':series['direction']*-1}
          elif series['event_type']==4:
-             return {'eps':series['direction']*-1,'s':series['direction']}
+             return {'eps':series['direction']*-1,'s':series['direction']*-1}
          else:
              return {'eps':series['direction']*-1,'s':series['direction']*-1}
 
@@ -88,29 +93,22 @@ def classify_event_types(m_df :pd.DataFrame,b_df:pd.DataFrame):
         CA_1: """
         
         if series['event_type']==4:
-            
-            if (((series['askprice_diff']!=0) &
-                (series['direction']==-1)) | 
-            (((series['bidprice_diff']!=0) &
-                (series['direction']==1)))):
+            if ((series['askprice_diff']!=0)| 
+               (series['bidprice_diff']!=0)):
                 return "MO_1"
             else:
                 return "MO_0"
 
         elif ((series['event_type']==2) |
               (series['event_type']==3)):
-            if (((series['askprice_diff']!=0) &
-                (series['direction']==-1)) | 
-            (((series['bidprice_diff']!=0) &
-                (series['direction']==1)))):
+            if ((series['askprice_diff']!=0)| 
+               (series['bidprice_diff']!=0)):
                 return "CA_1"
             else:
                 return "CA_0"
         elif series['event_type']==1 :
-            if (((series['askprice_diff']!=0) &
-                (series['direction']==-1)) | 
-            (((series['bidprice_diff']!=0) &
-                (series['direction']==1)))):
+            if ((series['askprice_diff']!=0)| 
+               (series['bidprice_diff']!=0)):
                 return "LO_1"
             else:
                 return "LO_0"
@@ -124,7 +122,7 @@ def classify_event_types(m_df :pd.DataFrame,b_df:pd.DataFrame):
     return df
 
 
-def sign_autocorr(lag:int, sequence:pd.Series):
+def sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
     """Calculates autocorrelation of adjusted sign 's' which is sign 'eps' except for LOs which are reveresed"
     """
 
@@ -132,8 +130,9 @@ def sign_autocorr(lag:int, sequence:pd.Series):
         elif LO s = -eps"""
 
     """ should decay with lag^-0.7"""
-    mult=sequence*sequence.shift(periods=-lag)
-    return mult.mean()
+    mult=sequence[sign]*sequence[sign].shift(periods=-lag)
+    return mult
+
 
 
 def event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
@@ -144,46 +143,57 @@ def event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
             * sequence['bouchaud_event'].shift(periods=-lag).eq(event2)
             * sequence['eps'].shift(periods=-lag))
     num=series.mean()
-    C_pi1_pi2=num / (Prob_pi(event1,sequence['bouchaud_event'])
-                     * Prob_pi(event2,sequence['bouchaud_event']))
+    Pi_1,count1=Prob_pi(event1,sequence)
+    Pi_2,count2=Prob_pi(event2,sequence)
+    C_pi1_pi2=series / (Pi_1 * Pi_2)
     return C_pi1_pi2
 
-def Prob_pi(event,sequence:pd.Series):
-    return sequence.eq(event).mean()
+def Prob_pi(event,sequence:pd.DataFrame):
+    """Page 1400 from the bouchaud paper"""
+    count=sequence['bouchaud_event'].eq(event)
+    return count.mean(),count.sum()
 
-def u_event_corr(event1, event2,lag,  sequence):
-    """Equation 14 from the paper.
+def u_event_corr(event1, event2,lag,  sequence:pd.DataFrame):
+    """Equation 14 from the bouchaud paper.
     """
     series=(sequence['bouchaud_event'].eq(event1)
             * sequence['bouchaud_event'].shift(periods=-lag).eq(event2))
     num=series.mean()
-    PI_pi1_pi2=num / (Prob_pi(event1,sequence['bouchaud_event'])
-                     * Prob_pi(event2,sequence['bouchaud_event'])) - 1
+    PI_pi1_pi2=series / (Prob_pi(event1,sequence)
+                     * Prob_pi(event2,sequence)) - 1
     return PI_pi1_pi2
 
 def response_func(event, lag, sequence:pd.DataFrame):
-    price_changes=(sequence['midprice']-sequence['midprice'].shift(periods=-lag))*sequence['eps']
-    return price_changes[sequence['bouchaud_event'].eq(event)].mean()
+    price_changes=(sequence['midprice'].shift(periods=-(lag-1))-sequence['midprice'].shift(periods=+1))*sequence['eps']
+    price_changes=price_changes/100.0
+    responses=price_changes[sequence['bouchaud_event'].eq(event)]
+    return responses
+
+def apply_to_seqs(fun,CI,args,sequences:list):
+    """Fun must return a scalar"""
+    metrics=pd.concat([fun(*args,seq) for seq in sequences],axis=0)
+    array_metrics=np.array(metrics[~np.isnan(metrics)])
+    unique=np.unique(array_metrics).shape[0]
+    if unique>1:
+        res=st.bootstrap((array_metrics,),np.mean,confidence_level=0.90,n_resamples=1000,method='basic')
+        ci=res.confidence_interval
+    else:
+        ci=ConfidenceInterval(0,0)
+    return metrics.mean(),ci
 
 
-def G_fun(diff_t, gamma, event):
-    """Assuming autocorr of signs: C(l)=<eps_t, eps_t+l> decays with a power law following l^-gamma (gamma=0.7 empirically)
-        Then this function should decay according to abs(diff_t)^-beta where:
-            beta = (1-gamma)/2 and diff_t is the difference in time between current price studied and t' the time at which
-                a previous event took place.
-                
-        Extended to be event dependant (discrete), depends on the event at t' """
-    
-    """cannot actually be calculated directly, calculated by solving system of equations in 17... in matrix form"""
-
+#Skip, or TODO at some other point. 
 def matrix_A(sequence):
     """equation 19 from paper"""
-
     return 0
 
 
 
+
  
+#USe the below for macro impact generative loop. 
+
+
 def get_impact_message(
         price: int,
         is_buy_message: bool,
@@ -215,6 +225,5 @@ def get_cleanup_message(
     """
     pass
 
-# TODO: Bouchaud Aggregator Model
 
 
