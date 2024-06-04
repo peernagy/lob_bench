@@ -6,23 +6,30 @@ import partitioning
 import data_loading
 
 
-def get_kwargs(score_config):
+def get_kwargs(score_config, conditional=False):
     kwargs = {
         "discrete": score_config.get("discrete", False),
+        "bin_method": score_config.get("bin_method", None),
         "quantiles": score_config.get("quantiles", None),
         "n_bins": score_config.get("n_bins", None),
         "thresholds": score_config.get("thresholds", None),
-        "group_scores": score_config.get("group_scores", True),
     }
+    if not conditional:
+        kwargs["group_scores"] = score_config.get("group_scores", True)
 
     # default to quartiles if no quantiles, n_bins or thresholds are specified
-    if (kwargs["quantiles"] is None) \
+    if kwargs["bin_method"] is None \
+        and (kwargs["quantiles"] is None) \
         and (kwargs["n_bins"] is None) \
         and (kwargs["thresholds"] is None):
-            # kwargs["quantiles"] = [0.25, 0.5, 0.75]
-            # fd: Freedman Diaconis Estimator
-            # see: https://numpy.org/doc/stable/reference/generated/numpy.histogram_bin_edges.html#numpy.histogram_bin_edges
-            kwargs["bin_method"] = 'fd'
+            if conditional:
+                # kwargs["quantiles"] = [0.25, 0.5, 0.75]
+                # use deciles to condition on by default
+                kwargs["quantiles"] = np.arange(0.1, 1.0, 0.1)
+            else:
+                # fd: Freedman Diaconis Estimator
+                # see: https://numpy.org/doc/stable/reference/generated/numpy.histogram_bin_edges.html#numpy.histogram_bin_edges
+                kwargs["bin_method"] = 'fd'
 
     return kwargs
 
@@ -75,6 +82,12 @@ def score_data_cond(
         score_cond_kwargs: dict = {},
     ):
     """
+    Grouping is done based on the scoring_fn_cond
+    and scores are based on the scoring_fn.
+    Conditional analysis can then be done using the returned score_df
+    by grouping on 'group' and calculating metrics on 'score'.
+    The additional colum 'subgroup' gives the bin of the conditional scores,
+    where the binning is done based on the scoring_fn and score_kwargs.
     """
     # calc scores to be conditioned on
     scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_cond)
@@ -91,7 +104,23 @@ def score_data_cond(
     eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
     score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
 
-    # TODO: do optional second grouping for each of the first groups! (score_cond_kwargs)
+    # second grouping for each of the first groups (binning the conditional scores):
+    sub_dfs = [df[1] for df in score_df.groupby('group')]
+    new_dfs = []
+    for df in sub_dfs:
+        real_scores = df.loc[df.type == 'real', 'score']
+        gen_scores = df.loc[df.type == 'generated', 'score']
+        groups_real, groups_gen = partitioning.group_by_score(
+            real_scores.values,
+            gen_scores.values,
+            **score_kwargs
+        )
+        df = df.copy()
+        df['subgroup'] = -1
+        df.loc[real_scores.index, 'subgroup'] = groups_real
+        df.loc[gen_scores.index, 'subgroup'] = groups_gen
+        new_dfs.append(df)
+    score_df = pd.concat(new_dfs)
 
     if return_plot_fn:
         # TODO: conditional plots
@@ -162,8 +191,9 @@ def score_prediction_horizons(
 def compute_metrics(
         loader: data_loading.Simple_Loader,
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        metric_fn: Callable[[pd.DataFrame], float] | \
-                   Iterable[Callable[[pd.DataFrame], float]],
+        # metric_fn: Callable[[pd.DataFrame], float] | \
+        #            Iterable[Callable[[pd.DataFrame], float]],
+        metric_fn: dict[str, Callable[[pd.DataFrame], float]],
         scoring_fn_cond: Optional[
                          Callable[[pd.DataFrame, pd.DataFrame], float]
                         ] = None,
@@ -176,6 +206,8 @@ def compute_metrics(
     if scoring_fn_cond is None:
         score_df, plot_fn = score_data(
             loader, scoring_fn, return_plot_fn=True, **score_kwargs)
+        metric = {m_name: m(score_df) for m_name, m in metric_fn.items()}
+
     # conditional scoring
     else:
         score_df, plot_fn = score_data_cond(
@@ -184,10 +216,47 @@ def compute_metrics(
             score_cond_kwargs=score_cond_kwargs
         )
 
-    if hasattr(metric_fn, "__iter__"):
-        metric = [m(score_df) for m in metric_fn]
-    else:
-        metric = metric_fn(score_df)
+        # calc. loss for each of the conditional distributions
+        lens = []
+        losses = []
+        # len_and_losses = []
+        for name, group in score_df.groupby('group'):
+            # len_and_losses.append([len(group), metric_fn(group)[0]])
+            lens.append(len(group))
+            # use the subgroup for binning now:
+            group.group = group.subgroup
+            losses.append(
+                np.stack(
+                    tuple(mfn(group)[2] for mfn in metric_fn.values()),
+                    axis=-1
+                )
+            )
+
+        # calculate weights by normalizing the number of observations
+        weights = np.array(lens, dtype=float)
+        weights /= weights.sum()
+        losses = np.array(losses).T
+        # print('weights:', weights, 'losses:', losses.shape, losses)
+        # sum over all groups
+        # shape: (num metrics, n_bootstrap + 1, num groups)
+        #     -> (num metrics, n_bootstrap + 1)
+        metric = np.nansum(losses * weights, axis=-1)
+        # print('metric:', metric)
+
+        # get the percentiles of the bootstrapped loss values
+        # TODO: make this an argument
+        ci_alpha = 0.01
+        q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+        # shape: (num metrics, n_bootstrap + 1)
+        ci = np.nanpercentile(metric, q, axis=-1).T
+        # print('ci', ci)
+        # metric = (metric[:, 0], ci, metric)
+        metric = {
+            m_name: (m[0], ci_, m) for m_name, ci_, m
+                in zip(metric_fn.keys(), ci, metric)
+        }
+        # print('metric:', metric)
+
     return metric, score_df, plot_fn
 
 
@@ -241,16 +310,18 @@ def run_benchmark(
 
     for score_name, score_config in scoring_config_dict.items():
 
+        # conditional scoring
         if score_config.get("eval", None) is not None:
             score_cond_config = score_config["cond"]
             score_config = score_config["eval"]
-            score_cond_kwargs = get_kwargs(score_cond_config)
+            score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
+            score_kwargs = get_kwargs(score_config, conditional=True)
             score_fn_cond = score_cond_config["fn"]
+        # unconditional scoring
         else:
             score_cond_kwargs = {}
             score_fn_cond = None
-
-        score_kwargs = get_kwargs(score_config)
+            score_kwargs = get_kwargs(score_config)
 
         # print('score_cond_kwargs:', score_cond_kwargs)
         metric_fns = score_config.get("metric_fns", default_metric)
@@ -278,22 +349,42 @@ def run_benchmark(
         
     return scores, score_dfs, plot_fns
 
-def summary_stats(scores, bootstrap=True, ci_alpha=0.05, n_bootstrap=100):
-    loss_vals = np.array([s[0] for s in scores.values()])
-    aggr_mean, aggr_median, aggr_iqm = _calc_summary_stats(loss_vals)
-    # print(aggr_mean, aggr_median, aggr_iqm)
-    
-    if bootstrap:
-        losses_bootstrap = np.array(
-            [[np.random.choice(s[2]) for s in scores.values()] for _ in range(n_bootstrap)])
-        bs_mean, bs_median, bs_iqm = _calc_summary_stats(losses_bootstrap)
-        q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
-        ci_mean = np.percentile(bs_mean, q)
-        ci_median = np.percentile(bs_median, q)
-        ci_iqm = np.percentile(bs_iqm, q)
-        return (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
-    return aggr_mean, aggr_median, aggr_iqm
+def summary_stats(
+        scores,
+        bootstrap: bool = True,
+        ci_alpha: float = 0.01,
+        n_bootstrap: int = 1000,
+        rng_np: np.random.Generator = np.random.default_rng(12345),
+    ):
+    return_dict = {}
+    # for each metric:
+    values_list = list(scores.values())
+    for i, metric_name in enumerate(values_list[0].keys()):
+        loss_vals = np.array([s[metric_name][0] for s in scores.values()])
 
+        # loss_vals = np.array(
+        #     [[score[2] for score in sdict.values()[0]] for sdict in scores.values()])
+        aggr_mean, aggr_median, aggr_iqm = _calc_summary_stats(loss_vals)
+        # print(aggr_mean, aggr_median, aggr_iqm)
+
+        if bootstrap:
+            # draw single score from each bootstrap sample per metric
+            losses_bootstrap = np.array(
+                [[rng_np.choice(s[metric_name][2]) for s in scores.values()] for _ in range(n_bootstrap)])
+            # print(losses_bootstrap)
+            bs_mean, bs_median, bs_iqm = _calc_summary_stats(losses_bootstrap)
+            q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+            ci_mean = np.percentile(bs_mean, q)
+            ci_median = np.percentile(bs_median, q)
+            ci_iqm = np.percentile(bs_iqm, q)
+            
+            # return (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
+            return_dict[metric_name] = (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
+        # return aggr_mean, aggr_median, aggr_iqm
+        else:
+            return_dict[metric_name] = aggr_mean, aggr_median, aggr_iqm
+
+    return return_dict
 
 def _calc_summary_stats(loss_vals):
     aggr_mean = np.mean(loss_vals, axis=-1)

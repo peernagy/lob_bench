@@ -1,3 +1,4 @@
+from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -15,16 +16,82 @@ from sklearn.neighbors import KernelDensity
 from scipy.spatial import cKDTree
 
 
-def wasserstein(p, q):
-    p, q = flatten(p), flatten(q)
-    return stats.wasserstein_distance(p, q)
+# TODO: optimise this performance-wise:
+def _bootstrap(
+        score_df: pd.DataFrame,
+        loss_fn: Callable[[pd.DataFrame], float],
+        n_bootstrap: int = 100,
+        ci_alpha: float = 0.01,
+        whole_data_loss: Optional[float] = None,
+        rng_np: np.random.Generator = np.random.default_rng(12345),
+    ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    """
+    if whole_data_loss is not None:
+        losses = [whole_data_loss]
+    else:
+        losses = []
+        
+    for i in range(n_bootstrap):
+        real_idx = score_df.loc[score_df['type'] == 'real'].index
+        n_real = len(real_idx)
+        generated_idx = score_df.loc[score_df['type'] == 'generated'].index
+        n_gen = len(generated_idx)
+
+        # draw bootstrap samples
+        real_sample = score_df.loc[real_idx].iloc[rng_np.integers(0, n_real, size=n_real)]
+        gen_sample = score_df.loc[generated_idx].iloc[rng_np.integers(0, n_gen, size=n_gen)]
+        
+        score_df_sampled = pd.concat([real_sample, gen_sample], axis=0)
+
+        # losses.append(loss_fn(real_sample.score, gen_sample.score))
+        losses.append(loss_fn(score_df_sampled))
+    losses = np.array(losses)
+
+    # get the percentiles of the bootstrapped loss values
+    q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+    ci = np.percentile(losses, q=q)
+
+    return ci, losses
+
+def wasserstein(
+        score_df: pd.DataFrame,
+        bootstrap_ci: bool = True,
+        n_bootstrap: int = 100,
+        ci_alpha: float = 0.01,
+        rng_np: np.random.Generator = np.random.default_rng(12345),
+    ):
+    """
+    """
+    def _wasserstein(score_df: pd.DataFrame):
+        # p, q = flatten(p), flatten(q)
+        p = score_df.loc[score_df['type'] == 'real', 'score']
+        q = score_df.loc[score_df['type'] == 'generated', 'score']
+        return stats.wasserstein_distance(p, q)
+    
+    if ('generated' not in score_df['type'].values) or ('real' not in score_df['type'].values):
+        if bootstrap_ci:
+            return np.nan, np.ones(2) * np.nan, np.ones(n_bootstrap+1) * np.nan
+        return np.nan
+    
+    score_df = score_df.copy()
+    score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
+    
+    w = _wasserstein(score_df)
+
+    if bootstrap_ci:
+        ci, losses = _bootstrap(score_df, _wasserstein, n_bootstrap, ci_alpha, w, rng_np)
+        return w, ci, losses
+    else:
+        return w
 
 def l1_by_group(
         score_df: pd.DataFrame,
         bootstrap_ci: bool = True,
         n_bootstrap: int = 100,
-        ci_alpha: float = 0.05,
-    ) -> float:
+        ci_alpha: float = 0.01,
+        rng_np: np.random.Generator = np.random.default_rng(12345),
+    ) -> float | tuple[float, np.ndarray, np.ndarray]:
     """
     Takes a "score dataframe" with columns "score" (real numbers), "group" (+int), "type" ("real" or "generated")
     Returns the mean L1 distance between the number of scores in each group for the real and generated data.
@@ -41,44 +108,15 @@ def l1_by_group(
         group_counts /= group_counts.sum(axis=0)
         return (group_counts.score_x - group_counts.score_y).abs().sum() / 2.
 
-    if 'generated' not in score_df['type'].values:
+    if ('generated' not in score_df['type'].values) or ('real' not in score_df['type'].values):
         if bootstrap_ci:
-            return 1, np.ones(2)
+            return 1, np.ones(2), np.ones(n_bootstrap+1)
         return 1.
 
     l1 = _calc_l1(score_df)
-
-    # TODO: optimise this performance-wise
+    
     if bootstrap_ci:
-        l1s = [l1]
-        rng = np.random.default_rng(12345)
-        for i in range(n_bootstrap):
-            # print(i)
-            real_idx = score_df.loc[score_df['type'] == 'real'].index
-            n_real = len(real_idx)
-            generated_idx = score_df.loc[score_df['type'] == 'generated'].index
-            n_gen = len(generated_idx)
-
-            # draw bootstrap samples
-            
-            real_sample = score_df.loc[real_idx].iloc[rng.integers(0, n_real, size=n_real)]
-            
-            # randlist_gen = pd.DataFrame(index=np.random.randint(n_gen, size=n_gen))
-            # gen_sample = pd.merge(score_df.loc[generated_idx], randlist_gen, left_index=True, right_index=True, how='right')
-            
-            gen_sample = score_df.loc[generated_idx].iloc[rng.integers(0, n_gen, size=n_gen)]
-            
-            score_df_sampled = pd.concat([real_sample, gen_sample], axis=0)
-            # display(score_df)
-
-            l1s.append(_calc_l1(score_df_sampled))
-        l1s = np.array(l1s)
-        # display(l1s)
-
-        # get the 5. and 95. percentile of the bootstrapped L1 distances
-        q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
-        l1_ci = np.percentile(l1s, q=q)
-
+        l1_ci, l1s = _bootstrap(score_df, _calc_l1, n_bootstrap, ci_alpha, l1, rng_np)
         return l1, l1_ci, l1s
     else:
         return l1
