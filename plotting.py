@@ -117,8 +117,8 @@ def hist_subplots(
 
     for i, (name, fn) in enumerate(plot_fns.items()):
         fn(name, axs[i])
-        # if i > 0:
-        #     axs[i].get_legend().remove()
+        if i > 0:
+            axs[i].get_legend().remove()
 
     lines_labels = [ax.get_legend_handles_labels() for ax in axs]
     lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]

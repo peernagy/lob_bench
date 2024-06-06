@@ -220,6 +220,8 @@ def group_by_score(
         thresholds = np.unique(all_scores)
     else:
         if bin_method is not None:
+            # ignore nan scores
+            all_scores = all_scores[~np.isnan(all_scores)]
             thresholds = np.histogram_bin_edges(all_scores, bins=bin_method)
         elif n_bins is not None:
             # thresholds = np.linspace(min_score, max_score, n_bins+1)
@@ -237,10 +239,17 @@ def group_by_score(
         else:
             raise ValueError("Must provide either bin_method, n_bins, quantiles, or thresholds.")
     
-    # assert isinstance(scores_gen[0], Iterable), "scores_gen must be an iterable of iterables."
+    # single (real) sequence
+    if (len(scores_real) == 0) or (not hasattr(scores_real[0], '__iter__')):
+        # groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
+        groups_real = np.searchsorted(thresholds, scores_real, side='right')
+        groups_gen = [
+            # np.searchsorted(thresholds, sg_i, side='right') - 1
+            np.searchsorted(thresholds, sg_i, side='right')
+            for sg_i in scores_gen
+        ]
     # subsequences
-    # if isinstance(scores_real[0], list):
-    if hasattr(scores_real[0], '__iter__'):
+    else:
         groups_real = [
             # np.searchsorted(thresholds, sr, side='right') - 1
             np.searchsorted(thresholds, sr, side='right')
@@ -249,15 +258,6 @@ def group_by_score(
         groups_gen = [
             # tuple(np.searchsorted(thresholds, sg_subseq, side='right') - 1 for sg_subseq in sg_i)
             tuple(np.searchsorted(thresholds, sg_subseq, side='right') for sg_subseq in sg_i)
-            for sg_i in scores_gen
-        ]
-    # single (real) sequence
-    else:
-        # groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
-        groups_real = np.searchsorted(thresholds, scores_real, side='right')
-        groups_gen = [
-            # np.searchsorted(thresholds, sg_i, side='right') - 1
-            np.searchsorted(thresholds, sg_i, side='right')
             for sg_i in scores_gen
         ]
     

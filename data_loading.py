@@ -278,11 +278,9 @@ class Simple_Loader():
         for rmp, rbp, in zip(real_message_paths, real_book_paths):
             _, _, after = rmp.partition('real_id_')
             real_id = after.split('_')[0].split('.')[0]
-
             
             gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}_gen_id_*.csv'))
             gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}_gen_id_*.csv'))
-
 
             cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}.csv'))
             cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}.csv'))
