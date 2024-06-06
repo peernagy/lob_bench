@@ -2,8 +2,8 @@
 **.json
 __pycache__/**
 /data_lob_bench/*
-__pycache__/*
-*.zip
+./__pycache__/***
+**.pyc
 *.DS_Store
 data_lob_bench.tar.gz
 eval2.ipynb
@@ -12,3 +12,7 @@ __pycache__/data_loading.cpython-310.pyc
 __pycache__/eval.cpython-310.pyc
 __pycache__/impact.cpython-310.pyc
 __pycache__/partitioning.cpython-310.pyc
+**.csv
+runs/**
+eval_*.ipynb
+**.zip
