@@ -215,6 +215,12 @@ def start_time(messages: pd.DataFrame) -> pd.Timestamp:
     dt = start_date_time(messages)
     return (dt - dt.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
 
+def inter_arrival_time(messages: pd.DataFrame) -> pd.Series:
+    """
+    Calculate inter-arrival time of messages in milliseconds.
+    """
+    return messages.time.diff().iloc[1:].dt.total_seconds() * 1000
+
 def time_to_first_fill(messages: pd.DataFrame) -> pd.Series:
     """
     Calculate time to first fill for new limit orders.
@@ -391,6 +397,22 @@ def cancel_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.
     ask_levels.name = 'ask_cancel_level'
     bid_levels.name = 'bid_cancel_level'
     return ask_levels, bid_levels
+
+def orderbook_imbalance(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
+    """
+    Calculate orderbook imbalance on the first level of the book (best prices).
+    """
+    ask_vol = book.iloc[:, 1]
+    bid_vol = book.iloc[:, 3]
+    imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol)
+    imbalance.index = messages.time
+    return imbalance
+
+def orderflow_imbalance(messages: pd.DataFrame) -> pd.Series:
+    """
+    Calculate orderflow imbalance.
+    """
+    raise NotImplementedError("Orderflow imbalance not yet implemented.")
 
 def compute_3d_book_changes(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     """
