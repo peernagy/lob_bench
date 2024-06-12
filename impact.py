@@ -13,11 +13,13 @@ import datetime
 import math
 from matplotlib import pyplot as plt
 import data_loading
+import pickle
+from collections import Counter
 
 from collections import namedtuple
 ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
 
-def filter_sequence_for_impact(message_sequence : pd.DataFrame,
+def _filter_sequence_for_impact(message_sequence : pd.DataFrame,
                                 book_sequence: pd.DataFrame,
                                 ordersize: Tuple[int,int],
                                 orderside: int,
@@ -65,7 +67,7 @@ def filter_sequence_for_impact(message_sequence : pd.DataFrame,
     filtered_books=book_sequence.loc[sequence_indices]
     return filtered_messages,filtered_books
 
-def filter_touch_events(m_df,b_df):
+def _filter_touch_events(m_df,b_df):
     indeces=(~b_df[[0, 1, 2,3]].diff().eq(0).all(axis=1) & m_df['event_type'].isin([1,2,3,4]))
     m_df=m_df.loc[indeces]
     b_df=b_df.loc[indeces]
@@ -73,7 +75,7 @@ def filter_touch_events(m_df,b_df):
     big_df=pd.concat([m_df,b_df],axis=1)
     return big_df
 
-def classify_event_types(big_df :pd.DataFrame):
+def _classify_event_types(big_df :pd.DataFrame):
     big_df['askprice_diff']=big_df[0].diff()
     big_df['bidprice_diff']=big_df[2].diff()
 
@@ -124,7 +126,7 @@ def classify_event_types(big_df :pd.DataFrame):
     df['midprice']=((df[0]+df[2])/2).astype(int)
     return df
 
-def sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
+def _sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
     """Calculates autocorrelation of adjusted sign 's' which is sign 'eps' except for LOs which are reveresed"
     """
 
@@ -135,7 +137,7 @@ def sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
     mult=sequence[sign]*sequence[sign].shift(periods=-lag)
     return mult
 
-def event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
+def _event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
     """Equation 13 from the paper.
     """
     series=(sequence['bouchaud_event'].eq(event1)
@@ -143,29 +145,29 @@ def event_cross_corr(event1, event2, lag, sequence:pd.DataFrame):
             * sequence['bouchaud_event'].shift(periods=-lag).eq(event2)
             * sequence['eps'].shift(periods=-lag))
     num=series.mean()
-    Pi_1,count1=Prob_pi(event1,sequence)
-    Pi_2,count2=Prob_pi(event2,sequence)
+    Pi_1,count1=_prob_pi(event1,sequence)
+    Pi_2,count2=_prob_pi(event2,sequence)
     C_pi1_pi2=series / (Pi_1 * Pi_2)
     return C_pi1_pi2
 
-def Prob_pi(event,sequence:pd.DataFrame):
+def _prob_pi(event,sequence:pd.DataFrame):
     """Page 1400 from the bouchaud paper"""
     count=sequence['bouchaud_event'].eq(event)
     return count.mean(),count.sum()
 
-def u_event_corr(event1, event2,lag,  sequence:pd.DataFrame):
+def _u_event_corr(event1, event2,lag,  sequence:pd.DataFrame):
     """Equation 14 from the bouchaud paper.
     """
     series=(sequence['bouchaud_event'].eq(event1)
             * sequence['bouchaud_event'].shift(periods=-lag).eq(event2))
     num=series.mean()
-    PI_pi1_pi2=series / (Prob_pi(event1,sequence)
-                     * Prob_pi(event2,sequence)) - 1
+    PI_pi1_pi2=series / (_prob_pi(event1,sequence)
+                     * _prob_pi(event2,sequence)) - 1
     return PI_pi1_pi2
 
-def response_func(event, lag, sequence:pd.DataFrame):
+def _response_func(event, lag, ticksize, sequence:pd.DataFrame):
     price_changes=(sequence['midprice'].shift(periods=-(lag-1))-sequence['midprice'].shift(periods=+1))*sequence['eps']
-    price_changes=price_changes/100.0
+    price_changes=price_changes/ticksize
     responses=price_changes[sequence['bouchaud_event'].eq(event)]
     return responses
 
@@ -197,21 +199,21 @@ def matrix_A(sequence):
     return 0
 
 
-def apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
+def _apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
     print(args[1],end="\r")
     metrics_real=[]
     metrics_gen=[]
     for i in range(0,min(max_seq,len(loader))):
-        real_df=classify_event_types(
-                        merge_MOs(
-                        filter_touch_events(loader[i].m_real,loader[i].b_real)))
+        real_df=_classify_event_types(
+                        #merge_MOs(
+                        _filter_touch_events(loader[i].m_real,loader[i].b_real))#)
         metr=fun(*args,real_df)
         metrics_real.append(metr)
 
         for j,mgen in enumerate(loader[i].m_gen):
-            gen_df=classify_event_types(
-                        merge_MOs(
-                        filter_touch_events(mgen,loader[i].b_gen[j])))
+            gen_df=_classify_event_types(
+                        #merge_MOs(
+                        _filter_touch_events(mgen,loader[i].b_gen[j]))#)
             metr=fun(*args,gen_df)
             metrics_gen.append(metr)
     metrics_real=pd.concat(metrics_real,axis=0)
@@ -221,7 +223,7 @@ def apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
         array_metrics=np.array(metrics[~np.isnan(metrics)])
         unique=np.unique(array_metrics).shape[0]
         if unique>1:
-            res=st.bootstrap((array_metrics,),np.mean,confidence_level=0.90,n_resamples=1000,method='basic')
+            res=st.bootstrap((array_metrics,),np.mean,confidence_level=CI,n_resamples=1000,method='basic')
             ci=res.confidence_interval
         else:
             ci=ConfidenceInterval(0,0)
@@ -229,7 +231,108 @@ def apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
     return results[0],results[1]
 
 
-def impact_compare(loader:Simple_Loader):
+
+
+def macro_impact_compare(max_seq,ticksize,Nbins,loader):
+    data={'dm_real':[], 
+          'p_pi_real':[],
+          'dm_gen':[],
+          'p_pi_gen':[]}
+
+    for i in range(0,min(max_seq,len(loader))):
+        dm, p_pi=_get_m_p(loader[i].m_real,loader[i].b_real,ticksize)
+        data['dm_real'].append(dm)
+        data['p_pi_real'].append(p_pi)
+        for j,mgen in enumerate(loader[i].m_gen):
+            dm, p_pi=_get_m_p(loader[i].m_gen[j],loader[i].b_gen[j],ticksize)
+            data['dm_gen'].append(dm)
+            data['p_pi_gen'].append(p_pi)
+    df=pd.DataFrame(data)
+
+    #use qcut if want uniform amounts. This gives uniform bins
+    a,bins=pd.cut(df['p_pi_real'],Nbins,duplicates='drop',retbins=True,labels=False)
+
+    M_i_r,P_i_r,M_i_g,P_i_g=[],[],[],[]
+
+    for i in range(0,Nbins):
+        M_i_r.append(df['dm_real'][a==i].mean())
+        P_i_r.append(df['p_pi_real'][a==i].mean())
+        M_i_g.append(df['dm_gen'][a==i].mean())
+        P_i_g.append(df['p_pi_gen'][a==i].mean())
+
+    return M_i_r,P_i_r,M_i_g,P_i_g
+
+def macro_impact_analyse(tau:int,ticksize,Nbins,m_seqs,b_seqs):
+    mb_seqs=[pd.concat([m,b],axis=1) for m,b in zip(m_seqs,b_seqs)]
+    data={'dm':[], 
+          'p_pi':[],}
+
+    time_seqs=[]
+
+    for df in mb_seqs:
+        a=[g.reset_index(drop=True) for i,g in df.groupby((df['time']-df['time'].iloc[0])//tau)]
+        time_seqs=time_seqs+a
+
+    print(len(time_seqs))
+
+    for i,df in enumerate(time_seqs):
+        dm, p_pi=_get_m_p_merged(df,ticksize)
+        data['dm'].append(dm)
+        data['p_pi'].append(p_pi)
+
+    df=pd.DataFrame(data)
+
+    #use qcut if want uniform amounts. This gives uniform bins
+    a,bins=pd.cut(df['p_pi'],Nbins,duplicates='drop',retbins=True,labels=False)
+    print("a",a.value_counts().sort_index())
+
+    
+
+    M_i_r,P_i_r=[],[]
+
+    for i in range(0,Nbins):
+        M_i_r.append(df['dm'][a==i].mean())
+        P_i_r.append(df['p_pi'][a==i].mean())
+
+    return M_i_r,P_i_r
+
+
+    
+
+
+def _get_m_p(m_df: pd.DataFrame,b_df : pd.DataFrame,ticksize:int =100):
+    #Unsure about directions for sell and buy but doesn't matter cause abs diff and sum. 
+    V_sell=m_df[((m_df['event_type']==4) &
+            (m_df['direction']==1))]['size'].sum()
+    V_buy=m_df[((m_df['event_type']==4) &
+            (m_df['direction']==-1))]['size'].sum()
+    den=(V_buy+V_sell)
+    if den !=0:
+        p=abs(V_sell-V_buy)/den
+    else:
+        p=0
+    mid_init=(b_df[0].iloc[0]+b_df[2].iloc[0])/2
+    mid_final=(b_df[0].iloc[-1]+b_df[2].iloc[-1])/2
+    delta_mid=mid_final-mid_init
+    return delta_mid/ticksize,p
+
+def _get_m_p_merged(mb_df: pd.DataFrame,ticksize:int =100):
+    #Unsure about directions for sell and buy but doesn't matter cause abs diff and sum. 
+    V_sell=mb_df[((mb_df['event_type']==4) &
+            (mb_df['direction']==1))]['size'].sum()
+    V_buy=mb_df[((mb_df['event_type']==4) &
+            (mb_df['direction']==-1))]['size'].sum()
+    den=(V_buy+V_sell)
+    if den !=0:
+        p=abs(V_sell-V_buy)/den
+    else:
+        p=0
+    mid_init=(mb_df[0].iloc[0]+mb_df[2].iloc[0])/2
+    mid_final=(mb_df[0].iloc[-1]+mb_df[2].iloc[-1])/2
+    delta_mid=mid_final-mid_init
+    return delta_mid/ticksize,p
+
+def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
     x=(10** np.arange(0.3,2.4,step=0.1)).astype(int)
     events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
     ys_real=[]
@@ -238,7 +341,7 @@ def impact_compare(loader:Simple_Loader):
     confidence_ints_gen=[]
     for event in events:
         print("Calculating for event type: ", event)
-        r,g=zip(*[apply_to_Sequences(response_func,0.975,5000,(event,i),loader) for i in x])
+        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,10000,(event,i,ticksize),loader) for i in x])
         r_m,r_ci=zip(*r)
         g_m,g_ci=zip(*g)
         ys_real.append(np.array(r_m))
@@ -246,11 +349,22 @@ def impact_compare(loader:Simple_Loader):
         confidence_ints_gen.append(g_ci)
         confidence_ints_real.append(r_ci)
 
+    np.savez("ys_real_"+ticker,*ys_real)
+    np.savez("ys_gen_"+ticker,*ys_gen)
+    np.save("x_vals_"+ticker,x)
+
+
+    with open('cis_real'+ticker+'.pickle', 'wb') as f:
+        pickle.dump(confidence_ints_real,f)
+    with open('cis_gen'+ticker+'.pickle', 'wb') as f:
+        pickle.dump(confidence_ints_gen,f)
+    
     plot_linlog_subplots(x,[ys_real,ys_gen],[confidence_ints_real,confidence_ints_gen],
                      legend=events,
-                     suptitle="Tick-normalised microscopic response functions for stock ticker: GOOG",
+                     suptitle="Tick-normalised microscopic response functions for stock ticker: "+ticker,
                      titles=["Real Data Sequences","Generated Data Sequences"],
-                     ylabel="Rπ (ticks)")
+                     ylabel="Rπ (ticks)",
+                     ticker=ticker)
 
 
     diff={}
@@ -258,15 +372,14 @@ def impact_compare(loader:Simple_Loader):
         delta=np.sum(np.abs(ys_real[i]-ys_gen[i]))
         print("Sum of abs differences for ",event," events:",delta)
         diff[event]=delta
-        
-    return np.mean(np.array(list(diff.values())))
-    
-
+    abs_diffs=np.array(list(diff.values()))
+    np.save("comparison_graph"+ticker,abs_diffs,)
+    return np.mean(abs_diffs)
 
 def impact_analyse(m_seqs,b_seqs):
-    mb_seqs=[filter_touch_events(m,b) for m,b in zip(m_seqs,b_seqs)]
+    mb_seqs=[_filter_touch_events(m,b) for m,b in zip(m_seqs,b_seqs)]
     df_seqs_mos=[merge_MOs(df) for df in mb_seqs]
-    df_seqs=[classify_event_types(df) for df in df_seqs_mos]
+    df_seqs=[_classify_event_types(df) for df in df_seqs_mos]
     temp=df_seqs[0][0].diff().abs()
     ticksize=temp[temp>0].min()
 
@@ -276,7 +389,7 @@ def impact_analyse(m_seqs,b_seqs):
     confidence_ints=[]
     for event in events:
         print("Calculating for event type: ", event)
-        mean,cis=zip(*[apply_to_seqs(response_func,(event,i),df_seqs) for i in x])
+        mean,cis=zip(*[apply_to_seqs(_response_func,(event,i,ticksize),df_seqs) for i in x])
         ys.append(np.array(mean))
         confidence_ints.append(cis)
 
@@ -335,7 +448,7 @@ def plot_linlog(x,ys,errs,legend,colors=['b','r','g','c','m','y'],title="Title",
     ax.set_ylabel(ylabel)
     ax.set_ylim(np.array(ys_lims)*1.2)
 
-def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace"):
+def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace",ticker:str="BLANK"):
     fig,axarr = plt.subplots(1,len(ys),sharey=True)
     plt.subplots_adjust(wspace=0.05)
     fig.set_figwidth(12)
@@ -361,7 +474,7 @@ def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,tit
     for a in axarr:
         ax.set_ylim(np.array(ys_lims)*1.2)
     fig.suptitle(suptitle)
-    fig.savefig('compare.png', dpi=fig.dpi)
+    fig.savefig('compare_'+ticker+'.png', dpi=fig.dpi)
 
  
 #USe the below for macro impact generative loop. 
@@ -403,11 +516,16 @@ def get_cleanup_message(
 
 
 if __name__ == '__main__':
-    root_path="/data1/sascha/data/GOOG/"
-
-    loader = data_loading.Simple_Loader(
-            real_data_path= root_path+"data_real",
-            gen_data_path= root_path+"data_gen",
-            cond_data_path=root_path+"data_cond",
-)
-    impact_compare(loader)
+    for root_path in ["/data1/sascha/data/GOOG/","/data1/sascha/data/INTC/"]:
+        print("Loading data from "+root_path)
+        ticker=str.split(root_path,"/")[-2]
+        
+        loader = data_loading.Simple_Loader(
+                real_data_path= root_path+"data_real",
+                gen_data_path= root_path+"data_gen",
+                cond_data_path=root_path+"data_cond",
+        )
+        res=impact_compare(loader,ticker=ticker,ticksize=100)
+        #df=macro_impact_data(10,100,loader)
+        #print(df)
+        print("Sum of differences of response function: ",res)
