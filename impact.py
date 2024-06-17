@@ -269,22 +269,21 @@ def macro_impact_analyse(tau:int,ticksize,Nbins,m_seqs,b_seqs):
 
     time_seqs=[]
 
+    print("Concat Done")
+
     for df in mb_seqs:
-        a=[g.reset_index(drop=True) for i,g in df.groupby((df['time']-df['time'].iloc[0])//tau)]
-        time_seqs=time_seqs+a
+        for i,df in df.groupby((df['time']-df['time'].iloc[0])//tau):
+            dm, p_pi=_get_m_p_merged(df,ticksize)
+            data['dm'].append(dm)
+            data['p_pi'].append(p_pi)
 
-    print(len(time_seqs))
-
-    for i,df in enumerate(time_seqs):
-        dm, p_pi=_get_m_p_merged(df,ticksize)
-        data['dm'].append(dm)
-        data['p_pi'].append(p_pi)
+    print("Time split & Calc done")
 
     df=pd.DataFrame(data)
 
     #use qcut if want uniform amounts. This gives uniform bins
     a,bins=pd.cut(df['p_pi'],Nbins,duplicates='drop',retbins=True,labels=False)
-    print("a",a.value_counts().sort_index())
+    #print("a",a.value_counts().sort_index())
 
     
 
