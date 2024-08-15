@@ -309,6 +309,7 @@ def run_benchmark(
     plot_fns = {}
 
     for score_name, score_config in scoring_config_dict.items():
+        print("Calculating scores and metrics for: ", score_name, end="\r")
 
         # conditional scoring
         if score_config.get("eval", None) is not None:

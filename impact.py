@@ -340,7 +340,7 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
     confidence_ints_gen=[]
     for event in events:
         print("Calculating for event type: ", event)
-        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,10000,(event,i,ticksize),loader) for i in x])
+        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,1000,(event,i,ticksize),loader) for i in x])
         r_m,r_ci=zip(*r)
         g_m,g_ci=zip(*g)
         ys_real.append(np.array(r_m))
