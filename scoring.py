@@ -104,7 +104,11 @@ def score_data_cond(
     eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
     score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
 
+    score_df_cond = partitioning.get_score_table(scores_real, scores_gen, groups_real, groups_gen)
+
     # second grouping for each of the first groups (binning the conditional scores):
+    score_df['subgroup'] = -1
+    score_df['score_cond'] = score_df_cond.score
     sub_dfs = [df[1] for df in score_df.groupby('group')]
     new_dfs = []
     for df in sub_dfs:
@@ -116,21 +120,21 @@ def score_data_cond(
             **score_kwargs
         )
         df = df.copy()
-        df['subgroup'] = -1
+        # df['subgroup'] = -1
         df.loc[real_scores.index, 'subgroup'] = groups_real
         df.loc[gen_scores.index, 'subgroup'] = groups_gen
         new_dfs.append(df)
     score_df = pd.concat(new_dfs)
 
     if return_plot_fn:
-        # TODO: conditional plots
-        # plot_fn = lambda title: plotting.hist(
-        #     scores_real,
-        #     scores_gen,
-        #     bins=np.unique(thresholds),
-        #     title=title,
-        # )
-        plot_fn = lambda: None
+        plot_fn = lambda var_eval, var_cond, bins, binwidth: plotting.facet_grid_hist(
+            score_df,
+            var_eval=var_eval,
+            var_cond=var_cond,
+            filter_groups_below_weight=0.01,
+            bins=bins,
+            binwidth=binwidth,
+        )
         return score_df, plot_fn
     else:
         return score_df
