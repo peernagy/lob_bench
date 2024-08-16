@@ -207,13 +207,16 @@ def group_by_score(
         return_thresholds: bool = False,
         discrete: bool = False,
     ) -> tuple[list[float], list[float]]:
-    """
+    """ TODO: think about quantile behaviour when large numbers of discrete values
+              occur, resulting in multiple quantiles to be the same. Currently, 
+              this will put all the data up until the first non-unique threshold
+              in the same group/bin. 
     """
 
     all_scores = np.concatenate((
         flatten(scores_real),
         flatten(scores_gen)
-    ), casting='safe')
+    ), casting='safe').astype(float)
     
     min_score, max_score = all_scores.min(), all_scores.max()
     if discrete:
