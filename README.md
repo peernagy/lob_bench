@@ -75,6 +75,4 @@ The impact resonse functions are calculated by simply providing the data loader 
 This filters and labels the data to only consider the events of note, details of which are in the paper. The response functions are then plotted with the 99% confidence interval depicted by the shaded regions. 
 
 
-### Discriminator Scoring
-
 

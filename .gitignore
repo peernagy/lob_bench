@@ -12,7 +12,17 @@ __pycache__/data_loading.cpython-310.pyc
 __pycache__/eval.cpython-310.pyc
 __pycache__/impact.cpython-310.pyc
 __pycache__/partitioning.cpython-310.pyc
+__pycache__/partitioning.cpython-310.pyc
+__pycache__/impact.cpython-310.pyc
 **.csv
 runs/**
 eval_*.ipynb
 **.zip
+images/*
+cis_*
+compare*
+comparison*
+__pycache__/*
+x_vals*
+ys*
+
