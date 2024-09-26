@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Optional
 import glob
 from dataclasses import dataclass
+import statsmodels.api as sm
 
 
 def get_price_range_for_level(
@@ -91,10 +92,10 @@ class Lazy_Tuple():
     """ Takes callables as args, returning their results when indexed. """
     def __init__(self, *args) -> None:
         self.args = args
-    
+
     def __getitem__(self, i):
         return self.args[i]()
-    
+
     def __len__(self):
         return len(self.args)
 
@@ -115,23 +116,23 @@ class Lobster_Sequence():
             # b_gen = None,
             # m_cond = None,
             # b_cond = None,
-            # NOTE uncomment this return back when publish, 
-            # tuple[int] cannot be recognized on my env 
+            # NOTE uncomment this return back when publish,
+            # tuple[int] cannot be recognized on my env
             # it was commented for easy tesging.
         ) -> None:
 
         self.date = date
-        
+
         if callable(m_real):
             self._m_real = m_real
         else:
             self.m_real = m_real
-        
+
         if callable(b_real):
             self._b_real = b_real
         else:
             self.b_real = b_real
-        
+
         if m_gen is not None:
             if callable(m_gen[0]):
                 self._m_gen = m_gen
@@ -178,7 +179,7 @@ class Lobster_Sequence():
         # if not isinstance(x, tuple):
         #     x = (x,)
         return x
-    
+
     @m_real.setter
     def m_real(self, value):
         if value is None:
@@ -187,14 +188,14 @@ class Lobster_Sequence():
             self._m_real = value
         else:
             self._m_real = lambda: value
-    
+
     @property
     def b_real(self):
         x = self._b_real()
         # if not isinstance(x, tuple):
         #     x = (x,)
         return x
-    
+
     @b_real.setter
     def b_real(self, value):
         if value is None:
@@ -203,13 +204,13 @@ class Lobster_Sequence():
             self._b_real = value
         else:
             self._b_real = lambda: value
-    
+
     @property
     def m_gen(self):
         if self._m_gen is None:
             return None
         return Lazy_Tuple(*self._m_gen)
-    
+
     @m_gen.setter
     def m_gen(self, value):
         if value is None:
@@ -218,13 +219,13 @@ class Lobster_Sequence():
             self._m_gen = value
         else:
             self._m_gen = tuple(lambda: x for x in value)
-    
+
     @property
     def b_gen(self):
         if self._b_gen is None:
             return None
         return Lazy_Tuple(*self._b_gen)
-    
+
     @b_gen.setter
     def b_gen(self, value):
         if value is None:
@@ -237,7 +238,7 @@ class Lobster_Sequence():
     @property
     def m_cond(self):
         return self._m_cond()
-    
+
     @m_cond.setter
     def m_cond(self, value):
         if value is None:
@@ -250,7 +251,7 @@ class Lobster_Sequence():
     @property
     def b_cond(self):
         return self._b_cond()
-    
+
     @b_cond.setter
     def b_cond(self, value):
         if value is None:
@@ -278,29 +279,29 @@ class Simple_Loader():
         for rmp, rbp, in zip(real_message_paths, real_book_paths):
             _, _, after = rmp.partition('real_id_')
             real_id = after.split('_')[0].split('.')[0]
-            
+
             gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}_gen_id_*.csv'))
             gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}_gen_id_*.csv'))
 
             cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}.csv'))
             cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}.csv'))
-            
+
             if len(cond_message_path) == 0:
                 cond_message_path = None
             elif len(cond_message_path) == 1:
                 cond_message_path = cond_message_path[0]
             else:
                 raise ValueError(f"Multiple conditional message files found. (real_id={real_id})")
-            
+
             if len(cond_book_path) == 0:
                 cond_book_path = None
             elif len(cond_book_path) == 1:
                 cond_book_path = cond_book_path[0]
             else:
                 raise ValueError(f"Multiple conditional book files found. (real_id={real_id})")
-            
+
             date_str = rmp.split('/')[-1].split('_')[1]
-            
+
             self.paths.append((date_str, rmp, rbp, gen_messsage_paths, gen_book_paths, cond_message_path, cond_book_path))
 
     def __len__(self) -> int:
@@ -325,7 +326,7 @@ class Simple_Loader():
 
         m_gen = tuple(
             lambda: add_date_to_time(
-                load_message_df(m), 
+                load_message_df(m),
                 date
             ) for m in gmp
         )
@@ -336,7 +337,7 @@ class Simple_Loader():
             m = load_message_df(cmp)
             m = add_date_to_time(m, date)
             return m
-        
+
         def b_cond():
             return load_book_df(cbp)
 
