@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from typing import Any
 from scipy.optimize import curve_fit
 
+
 # FIXME: this is a hack to import from parent dir
 # add parent dir to path
 import sys
@@ -47,160 +48,16 @@ class Message:
     direction: jax.Array
 
 
-# def estimate_params(
-#     book_data: pd.DataFrame,
-#     message_data: pd.DataFrame,
-#     tick_size: int = 100,
-#     num_ticks: int = 500,
-# ) -> dict[str, Any]:
-#     # entire time duration
-#     total_time = float(message_data.time.iloc[-1] - message_data.time.iloc[0])
-#     # TODO: consider grouping executions at same time stamp?
-#     # number of executions / market orders
-#     mo_count = message_data[message_data.event_type == 4].shape[0]
-
-#     # average size of limit orders
-#     lo_size = message_data.loc[message_data.event_type == 1, "size"].mean()
-#     # average size of market orders
-#     mo_size = message_data.loc[message_data.event_type == 4, "size"].mean()
-#     # average size of cancellations
-#     co_size = message_data.loc[message_data.event_type.isin((2, 3)), "size"].mean()
-#     print("Sl:", lo_size, "Sm:", mo_size, "Sc:", co_size)
-
-#     mean_spread = ((book_data.iloc[:, 0] - book_data.iloc[:, 2]) / tick_size).mean()
-#     print("Mean spread:", mean_spread)
-
-#     # market order rate (sizes relative to limit orders)
-#     mo_mu = mo_count / total_time * mo_size / lo_size
-
-#     # TODO: calculate difference between message price and (opposite) best price
-#     #       to get depth of message --> twice, per side of book
-#     #       then, value_counts of depths to get distribution of depths
-#     #       and divide by T to get rates for LOs and COs
-
-#     lo_count, co_count = _get_counts_by_depth(book_data, message_data, tick_size, num_ticks)
-#     print('lo_count', lo_count)
-#     print('co_count', co_count)
-#     i = jnp.arange(1, num_ticks+1)
-#     lo_sol, pcov = curve_fit(lo_rate, i, lo_count)
-#     print("LO fit", lo_sol)
-#     plt.plot(i, lo_count, label="LO")
-#     plt.plot(i, lo_rate(i, *lo_sol), label="LO fit")
-#     plt.title("Limit Order Counts")
-#     plt.xlabel("Depth")
-#     plt.ylabel("Count")
-#     plt.legend()
-#     plt.show()
-
-#     # convert all lobster book data to jax array of volumes at depths
-#     book_jnp = jax.jit(jax.vmap(init_book, in_axes=(0, None)), static_argnums=(1,))(
-#         jnp.array(book_data.values),
-#         CSTParams(
-#             tick_size=tick_size,
-#             num_ticks=num_ticks,
-#         )
-#     )
-#     # calculate Q_i from paper (mean volume at depth) averaged over bid and ask sides
-#     mean_size_at_depth = (book_jnp.asks.mean(axis=0) + book_jnp.bids.mean(axis=0)) / 2
-#     print("mean_size_at_depth", mean_size_at_depth)
-
-#     co_theta = co_count / (mean_size_at_depth * total_time) * (co_size / lo_size)
-#     co_theta = co_theta.at[jnp.isnan(co_theta)].set(0)
-#     print("co_theta", co_theta)
-
-#     params_dict = {
-#         "total_time": total_time,
-#         "num_events": message_data.shape[0],
-#         "mean_spread": mean_spread,
-#         "lo_size": lo_size,
-#         "mo_size": mo_size,
-#         "co_size": co_size,
-#         "mo_count": mo_count,
-#         "mo_mu": mo_mu,
-#         "lo_counts": lo_count,
-#         "co_counts": co_count,
-#         "q_i": mean_size_at_depth,
-#         "co_theta": co_theta,
-#     }
-#     return params_dict
-
-
-# def _powerlaw(i, k, alpha):
-#     return k * i ** (-alpha)
-
-
-# def _get_counts_by_depth(
-#     book_data: pd.DataFrame,
-#     message_data: pd.DataFrame,
-#     tick_size: int,
-#     num_ticks: int,
-# ) -> tuple[jax.Array, jax.Array]:
-#     ask_counts = _get_counts_by_side(book_data, message_data, tick_size, is_bid=False)
-#     bid_counts = _get_counts_by_side(book_data, message_data, tick_size, is_bid=True)
-#     counts = pd.merge(
-#         ask_counts, bid_counts, left_index=True, right_index=True, how="outer"
-#     ).fillna(0)
-#     counts["lo_count"] = counts["lo_count_bid"] + counts["lo_count_ask"]
-#     counts["co_count"] = counts["co_count_bid"] + counts["co_count_ask"]
-
-#     # counts[["lo_count", "co_count"]].hist(bins=20, range=(0,20))
-#     # plt.show()
-
-#     lo_count = jnp.zeros(num_ticks, dtype=jnp.int32)
-#     lo_count = lo_count.at[counts.lo_count.index.values - 1].set(counts.lo_count.values)
-
-#     co_count = jnp.zeros(num_ticks, dtype=jnp.int32)
-#     co_count = co_count.at[counts.co_count.index.values - 1].set(counts.co_count.values)
-
-#     return lo_count, co_count
-
-
-# def _get_counts_by_side(
-#     book_data: pd.DataFrame,
-#     message_data: pd.DataFrame,
-#     tick_size: int,
-#     is_bid: bool,
-# ) -> pd.Series:
-#     if is_bid:
-#         direction = 1
-#         p_ref_col_idx = 0
-#         quant_col_idx = 3
-#     else:
-#         direction = -1
-#         p_ref_col_idx = 2
-#         quant_col_idx = 1
-
-#     b_depth = book_data[message_data.direction == direction].copy()
-#     m_depth = message_data[message_data.direction == direction].copy()
-#     m_depth.price = (-direction) * (
-#         m_depth.price - b_depth.iloc[:, p_ref_col_idx]
-#     ) // tick_size
-
-#     b_depth = pd.concat([m_depth.price, b_depth.iloc[:, quant_col_idx::4]], axis=1)
-#     print(b_depth)
-
-#     # limit orders
-#     lo_counts = (
-#         m_depth
-#         .loc[m_depth.event_type == 1, "price"]
-#         .value_counts(sort=False)
-#         .sort_index()
-#     )
-#     lo_counts.name = "lo_count_" + ("bid" if is_bid else "ask")
-#     # cancel orders
-#     co_counts = (
-#         m_depth
-#         .loc[m_depth.event_type.isin((2, 3)), "price"]
-#         .value_counts(sort=False)
-#         .sort_index()
-#     )
-#     co_counts.name = "co_count_" + ("bid" if is_bid else "ask")
-
-#     counts = pd.merge(
-#         lo_counts, co_counts, left_index=True, right_index=True, how="outer"
-#     ).fillna(0)
-
-#     return counts
+def init_params(params_dict: dict[str, Any]) -> CSTParams:
+    params = CSTParams(
+        qty=jnp.round(params_dict["lo_size"]).astype(jnp.int32),
+        tick_size=params_dict["tick_size"],
+        num_ticks=params_dict["num_ticks"],
+        lo_k=params_dict["lo_k"],
+        lo_alpha=params_dict["lo_alpha"],
+        mo_mu=params_dict["mo_mu"],
+    )
+    return params, params_dict["lo_lambda"], params_dict["co_theta"]
 
 
 def lo_rate(depth_i, k, alpha):
@@ -310,7 +167,7 @@ def make_step_book_scannable(n_lvls: int):
         book, base_rates, params, rng = carry
         book, message, rng = step_book(book, base_rates, params, rng)
         l2, time = get_l2_book(book, params, n_lvls)
-        return (book, base_rates, params, rng), (message, l2)
+        return (book, base_rates, params, rng), (message, l2.flatten())
 
     return _step_book_scannable
 
@@ -345,7 +202,7 @@ def _apply_event(
     qty = (params.qty * (-2 * (event_type >= 2) + 1)).squeeze()
     # odd event types pertain to the bid side
     bid_side = (event_type % 2).squeeze()
-    print('depth_i:', depth_i, 'qty:', qty, 'bid_side:', bid_side)
+    # print('depth_i:', depth_i, 'qty:', qty, 'bid_side:', bid_side)
 
     book = _change_vol(book, depth_i, qty, bid_side, params)
     book.time += tau
@@ -408,20 +265,16 @@ def _change_vol(
     # change volume at depth_i
     vols = vols.at[depth_i].set(jnp.maximum(0, vols[depth_i] + qty))
     p_ref_idx_new = jnp.argwhere(vols > 0, size=1)[0, 0]
-    print("p_ref_idx", p_ref_idx, "p_ref_idx_new", p_ref_idx_new)
+    # print("p_ref_idx", p_ref_idx, "p_ref_idx_new", p_ref_idx_new)
     p_delta = (p_ref_idx_new - p_ref_idx).astype(jnp.int32)
     # update reference price by moving it to the new best price
     p_ref = p_ref + p_delta * (-2*bid_side + 1) * params.tick_size
     # shift the opposite side of the book in accordance with the new reference price
     vols_opp = jnp.roll(vols_opp, p_delta)
-    print('p_delta:', p_delta)
+    # print('p_delta:', p_delta)
 
     vols_opp = jax.lax.select(
         p_delta >= 0,
-        # vols_opp.at[:p_delta].set(0),
-        # vols_opp.at[p_delta:].set(0),
-        # jax.lax.dynamic_update_slice(vols_opp, jnp.zeros(p_delta), 0),
-        # jax.lax.dynamic_update_slice(vols_opp, jnp.zeros(p_delta), -p_delta),
         jnp.where(jnp.arange(vols_opp.shape[0]) < p_delta, 0, vols_opp),
         jnp.where(jnp.arange(vols_opp.shape[0]) >= vols_opp.shape[0] + p_delta, 0, vols_opp),
     )
@@ -447,12 +300,6 @@ def _get_book_sides(
     # idx position of current reference price
     # e.g. for bid change, where best_bid is in the array
     p_ref_idx = (book.best_ask - book.best_bid) // params.tick_size - 1
-    # if bid_side:
-    #     vols, vols_opp = book.bids, book.asks
-    #     p_ref = book.best_bid
-    # else:
-    #     vols, vols_opp = book.asks, book.bids
-    #     p_ref = book.best_ask
     vols = jax.lax.select(bid_side, book.bids, book.asks)
     vols_opp = jax.lax.select(bid_side, book.asks, book.bids)
     p_ref = jax.lax.select(bid_side, book.best_bid, book.best_ask)
@@ -460,33 +307,57 @@ def _get_book_sides(
 
 
 if __name__ == "__main__":
+    from param_estimation import load_params
+
     # with jax.disable_jit():
 
-    params = CSTParams()
-    # book = init_book(
-    #     jnp.array([100_0100, 1, 100_0000, 2, 101_1000, 3, 98_0000, 4, 0, 0, 0, 0]),
-    #     params
-    # )
-    # print("INITIAL BOOK")
+    aggr_params_dict = load_params(
+        "data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10/aggregated_params.pkl"
+    )
+    params, lo_lambda, co_theta = init_params(aggr_params_dict)
+    print("model_params", params)
+    print("lo_lambda", lo_lambda)
+    print("co_theta", co_theta)
+
+    # plt.plot(jnp.arange(500), lo_lambda)
+    # plt.plot(jnp.arange(500), co_theta)
+    # plt.show()
+
+    lobster_book = data_loading.load_book_df(
+        "data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10/"
+        "AVXL_2021-01-04_34200000_57600000_orderbook_10.csv"
+    )
+
+    # params = CSTParams()
+    book = init_book(
+        # jnp.array([100_0100, 1, 100_0000, 2, 101_1000, 3, 98_0000, 4, 0, 0, 0, 0]),
+        lobster_book.iloc[0].values,
+        params
+    )
+    print("INITIAL BOOK")
     # print(book)
-    # print(get_l2_book(book, params, 5))
+    print(get_l2_book(book, params, 5))
 
     # co_theta = jnp.ones(params.num_ticks) * 0.1
-    # base_rates = get_event_base_rates(params, co_theta)
-    # print("base_rates", base_rates)
+    base_rates = get_event_base_rates(
+        params,
+        cancel_rates=co_theta,
+        lo_rates=lo_lambda,
+    )
+    print("base_rates", base_rates)
+    rng = jax.random.PRNGKey(0)
 
-    # rng = jax.random.PRNGKey(0)
-
-    # # SCAN VERSION
-    # c, (msgs, l2_books) = jax.lax.scan(
-    #     make_step_book_scannable(5),
-    #     (book, base_rates, params, rng),
-    #     length=100,
-    # )
-    # print(msgs)
+    # SCAN VERSION
+    c, (msgs, l2_books) = jax.lax.scan(
+        make_step_book_scannable(10),
+        (book, base_rates, params, rng),
+        length=100,
+    )
+    print(msgs)
     # print(l2_books)
+    print(l2_book_to_pandas(l2_books))
 
-    # FOR LOOP VERSION
+    # FOR LOOP VERSION (no scan)
     # for i in range(100):
     #     book, message, rng = step_book(book, base_rates, params, rng)
     #     print(message)
@@ -494,8 +365,3 @@ if __name__ == "__main__":
     #     print(get_l2_book(book, params, 5))
     #     # print(book)
     #     print()
-
-    m_df = data_loading.load_message_df("data/GOOG_2012-06-21_34200000_57600000_message_10.csv")
-    b_df = data_loading.load_book_df("data/GOOG_2012-06-21_34200000_57600000_orderbook_10.csv")
-    print(m_df)
-    estimate_params(b_df, m_df, tick_size=100)

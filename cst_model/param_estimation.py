@@ -85,19 +85,23 @@ def estimate_params(
         "lo_size": lo_size,
         "mo_size": mo_size,
         "co_size": co_size,
-        "lo_theta": lo_count / total_time,
+        "lo_lambda": lo_count / total_time,
         "mo_count": mo_count,
         "mo_mu": mo_mu,
-        "lo_counts": lo_count,
-        "co_counts": co_count,
+        "lo_count": lo_count,
+        "co_count": co_count,
         "q_i": mean_size_at_depth,
         "co_theta": co_theta,
+        "tick_size": tick_size,
+        "num_ticks": num_ticks,
+        "lo_k": lo_sol[0],
+        "lo_alpha": lo_sol[1],
     }
     return params_dict
 
 
 def _fit_power_law(y: jax.Array, plot_fit: bool = False) -> jax.Array:
-    i = jnp.arange(1, y.size[0] + 1)
+    i = jnp.arange(1, y.shape[0] + 1)
     fit_params, pcov = curve_fit(cst.lo_rate, i, y)
     # print("LO fit", lo_sol)
 
@@ -154,6 +158,9 @@ def aggregate_params(
     aggr = {
         "total_time": jnp.sum(jnp.array([d["total_time"] for d in param_iter])),
         "num_events": jnp.sum(jnp.array([d["num_events"] for d in param_iter])),
+        # must be constant across all files: take from first
+        "tick_size": param_iter[0]["tick_size"],
+        "num_ticks": param_iter[0]["num_ticks"],
     }
     # weight aggregate by number of events
     aggr["mean_spread"] = _weighted_aggr(param_iter, "mean_spread", aggr)
@@ -162,14 +169,18 @@ def aggregate_params(
     aggr["co_size"] = _weighted_aggr(param_iter, "co_size", aggr)
     aggr["mo_count"] = jnp.sum(jnp.array([d["mo_count"] for d in param_iter]))
     aggr["mo_mu"] = aggr["mo_count"] / aggr["total_time"] * aggr["mo_size"] / aggr["lo_size"]
-    aggr["lo_counts"] = jnp.stack([d["lo_counts"] for d in param_iter], axis=0).sum(axis=0)
-    aggr["co_counts"] = jnp.stack([d["co_counts"] for d in param_iter], axis=0).sum(axis=0)
-    aggr["lo_theta"] = aggr["lo_counts"] / aggr["total_time"]
+    aggr["lo_count"] = jnp.stack([d["lo_count"] for d in param_iter], axis=0).sum(axis=0)
+    aggr["co_count"] = jnp.stack([d["co_count"] for d in param_iter], axis=0).sum(axis=0)
+    aggr["lo_lambda"] = aggr["lo_count"] / aggr["total_time"]
     aggr["q_i"] = _weighted_aggr(param_iter, "q_i", aggr)
     aggr["co_theta"] = (
-        aggr["co_counts"] / (aggr["q_i"] * aggr["total_time"])
+        aggr["co_count"] / (aggr["q_i"] * aggr["total_time"])
         * (aggr["co_size"] / aggr["lo_size"])
     )
+
+    lo_sol = _fit_power_law(aggr["lo_count"] / aggr["total_time"], plot_fit=False)
+    aggr["lo_k"] = lo_sol[0]
+    aggr["lo_alpha"] = lo_sol[1]
 
     if save_path is not None:
         print("Saving aggregated params to", save_path)
@@ -236,24 +247,24 @@ def _get_counts_by_side(
     b_depth = pd.concat([m_depth.price, b_depth.iloc[:, quant_col_idx::4]], axis=1)
 
     # limit orders
-    lo_counts = (
+    lo_count = (
         m_depth
         .loc[m_depth.event_type == 1, "price"]
         .value_counts(sort=False)
         .sort_index()
     )
-    lo_counts.name = "lo_count_" + ("bid" if is_bid else "ask")
+    lo_count.name = "lo_count_" + ("bid" if is_bid else "ask")
     # cancel orders
-    co_counts = (
+    co_count = (
         m_depth
         .loc[m_depth.event_type.isin((2, 3)), "price"]
         .value_counts(sort=False)
         .sort_index()
     )
-    co_counts.name = "co_count_" + ("bid" if is_bid else "ask")
+    co_count.name = "co_count_" + ("bid" if is_bid else "ask")
 
     counts = pd.merge(
-        lo_counts, co_counts, left_index=True, right_index=True, how="outer"
+        lo_count, co_count, left_index=True, right_index=True, how="outer"
     ).fillna(0)
 
     return counts
@@ -269,3 +280,7 @@ if __name__ == "__main__":
     # estimate on all files in a directory
     # estimate_from_data_files("data/")
     aggr_params = estimate_from_data_files("data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10")
+    model_params, lo_lambda, co_theta = cst.init_params(aggr_params)
+    print(model_params)
+    print("lo_lambda", lo_lambda)
+    print("co_theta", co_theta)
