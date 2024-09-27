@@ -19,6 +19,9 @@ from lob_bench import data_loading
 
 
 def pickle_params(params: dict[str, Any], path: str) -> None:
+    from pathlib import Path
+    parent_dir = path.rsplit("/", maxsplit=1)[0]
+    Path(parent_dir).mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(params, f)
 
@@ -42,10 +45,13 @@ def estimate_params(
 
     # average size of limit orders
     lo_size = message_data.loc[message_data.event_type == 1, "size"].mean()
+    lo_size = jnp.nan_to_num(lo_size, nan=1.)
     # average size of market orders
     mo_size = message_data.loc[message_data.event_type == 4, "size"].mean()
+    mo_size = jnp.nan_to_num(mo_size, nan=1.)
     # average size of cancellations
     co_size = message_data.loc[message_data.event_type.isin((2, 3)), "size"].mean()
+    co_size = jnp.nan_to_num(co_size, nan=1.)
     # print("Sl:", lo_size, "Sm:", mo_size, "Sc:", co_size)
 
     mean_spread = ((book_data.iloc[:, 0] - book_data.iloc[:, 2]) / tick_size).mean()
@@ -118,15 +124,25 @@ def _fit_power_law(y: jax.Array, plot_fit: bool = False) -> jax.Array:
 
 def estimate_data_file(
     orderbook_path: str,
+    save_dir: str = None,
     tick_size: int = 100,
     num_ticks: int = 500,
     save: bool = True,
 ):
+    if save_dir is None:
+        save_path = orderbook_path.replace("orderbook", "params").replace(".csv", ".pkl")
+    else:
+        save_path = (
+            save_dir + "/"
+            + orderbook_path.rsplit("/", maxsplit=1)[-1]
+            .replace("orderbook", "params")
+            .replace(".csv", ".pkl")
+        )
+
     b_df = data_loading.load_book_df(orderbook_path)
     m_df = data_loading.load_message_df(orderbook_path.replace("orderbook", "message"))
     params = estimate_params(b_df, m_df, tick_size, num_ticks)
     if save:
-        save_path = orderbook_path.replace("orderbook", "params").replace(".csv", ".pkl")
         print("Saving params to", save_path)
         pickle_params(params, save_path)
     return params
@@ -134,15 +150,48 @@ def estimate_data_file(
 
 def estimate_from_data_files(
     data_path: str,
+    save_path: str = None,
     tick_size: int = 100,
     num_ticks: int = 500,
+    recompute_existing: bool = True,
 ):
+    if save_path is None:
+        save_path = data_path + "/aggregated_params.pkl"
+    save_path_dir = save_path.rsplit("/", maxsplit=1)[0]
+
     aggr_params = []
+    # load all from file if available
+    # aggr_params = [load_params(p) for p in glob.glob(save_path_dir + "/*_params_*")]
     book_files = glob.glob(data_path + "/*orderbook*.csv")
+    assert len(book_files) > 0, "No orderbook files found in directory " + data_path
     for book_file in book_files:
-        print("Estimating", book_file)
-        aggr_params.append(estimate_data_file(book_file, tick_size, num_ticks, save=True))
-    return aggregate_params(aggr_params, save_path=data_path + "/aggregated_params.pkl")
+        try:
+            if not recompute_existing:
+                existing_params_file = (
+                    save_path_dir + "/"
+                    + book_file.rsplit("/", maxsplit=1)[1]
+                    .replace("orderbook", "params")
+                    .replace(".csv", ".pkl")
+                )
+                aggr_params.append(
+                    load_params(existing_params_file)
+                )
+                print("Loading existing params:", existing_params_file)
+            else:
+                raise FileNotFoundError
+        except FileNotFoundError:
+            print("Estimating", book_file)
+            aggr_params.append(
+                estimate_data_file(
+                    book_file,
+                    save_path_dir,
+                    tick_size,
+                    num_ticks,
+                    save=True,
+                )
+            )
+
+    return aggregate_params(aggr_params, save_path=save_path)
 
 
 def aggregate_params(
@@ -151,7 +200,7 @@ def aggregate_params(
 ) -> dict[str, Any]:
     def _weighted_aggr(param_iter, field_name, aggr_params):
         return (
-            jnp.mean(jnp.array([d[field_name] * d["num_events"] for d in param_iter]))
+            jnp.sum(jnp.array([d[field_name] * d["num_events"] for d in param_iter]))
             / aggr_params["num_events"]
         )
 
@@ -185,6 +234,7 @@ def aggregate_params(
     if save_path is not None:
         print("Saving aggregated params to", save_path)
         pickle_params(aggr, save_path)
+        # print(aggr)
 
     return aggr
 
@@ -279,7 +329,10 @@ if __name__ == "__main__":
 
     # estimate on all files in a directory
     # estimate_from_data_files("data/")
-    aggr_params = estimate_from_data_files("data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10")
+    aggr_params = estimate_from_data_files(
+        "data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10",
+        recompute_existing=False
+    )
     model_params, lo_lambda, co_theta = cst.init_params(aggr_params)
     print(model_params)
     print("lo_lambda", lo_lambda)

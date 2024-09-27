@@ -69,7 +69,7 @@ def update_oid(
         # TODO: find out why this returns -1 and is not working
         idx = job.get_random_id_match(SIM_CONFIG, _rng, side_array, msg_dict)
         cancelled_oid = side_array[idx, 2]
-        jax.debug.print('cancelled_oid {}', cancelled_oid)
+        # jax.debug.print('cancelled_oid {}', cancelled_oid)
         msg = msg.at[5].set(cancelled_oid)
         return msg, rng
 
@@ -83,7 +83,7 @@ def update_oid(
             _get_top_ask_order_oid,
             sim_state
         )
-        jax.debug.print('active_oid {}', oid)
+        # jax.debug.print('active_oid {}', oid)
         return msg.at[5].set(oid), rng
 
     def _get_top_bid_order_oid(sim_state):

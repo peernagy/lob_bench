@@ -102,7 +102,11 @@ def sample_event(rates: jax.Array, rng: jax.Array) -> int:
     return event
 
 
-def init_book(l2_book_lobster: jax.Array, params: CSTParams) -> Book:
+def init_book(
+    l2_book_lobster: jax.Array,
+    params: CSTParams,
+    init_time: float = 0.
+) -> Book:
     l2_book_lobster = l2_book_lobster.reshape(-1, 4)
     best_ask = l2_book_lobster[0, 0]
     best_bid = l2_book_lobster[0, 2]
@@ -120,7 +124,7 @@ def init_book(l2_book_lobster: jax.Array, params: CSTParams) -> Book:
         best_bid=best_bid,
         asks=asks,
         bids=bids,
-        time=0.
+        time=init_time
     )
 
 
@@ -157,7 +161,7 @@ def step_book(
     rates = get_event_rates(base_rates, book)
     tau = sample_tau(rates, rng_tau)
     event = sample_event(rates, rng_event)
-    print("EVENT:", event, "TAU:", tau)
+    # print("EVENT:", event, "TAU:", tau)
     book, message = _apply_event(book, tau, event, params)
     return book, message, rng
 
@@ -167,7 +171,7 @@ def make_step_book_scannable(n_lvls: int):
         book, base_rates, params, rng = carry
         book, message, rng = step_book(book, base_rates, params, rng)
         l2, time = get_l2_book(book, params, n_lvls)
-        return (book, base_rates, params, rng), (message, l2.flatten())
+        return (book, base_rates, params, rng), (l2.flatten(), message)
 
     return _step_book_scannable
 
@@ -248,7 +252,7 @@ def _get_message(
     return Message(
         time=time,
         event_type=lobster_type,
-        size=qty,
+        size=jnp.abs(qty),
         price=price,
         direction=direction
     )
@@ -348,7 +352,7 @@ if __name__ == "__main__":
     rng = jax.random.PRNGKey(0)
 
     # SCAN VERSION
-    c, (msgs, l2_books) = jax.lax.scan(
+    c, (l2_books, msgs) = jax.lax.scan(
         make_step_book_scannable(10),
         (book, base_rates, params, rng),
         length=100,
