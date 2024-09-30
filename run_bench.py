@@ -184,12 +184,14 @@ def run_benchmark(
             # default_metric=metrics.wasserstein
             default_metric=metric_config
         )
+        print("[*] Saving results...")
         save_results(
             scores,
             score_dfs,
             args.save_dir
             + f"/scores_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
+        print("...done")
 
     if not args.uncond_only:
         print("[*] Running conditional scoring")
@@ -200,12 +202,14 @@ def run_benchmark(
             # default_metric=metrics.wasserstein
             default_metric=metric_config
         )
+        print("[*] Saving results...")
         save_results(
             scores_cond,
             score_dfs_cond,
             args.save_dir
             + f"/scores_cond_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
+        print("...done")
 
     print("[*] Done")
 

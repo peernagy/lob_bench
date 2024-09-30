@@ -31,7 +31,7 @@ If this is not provided, the JAX-LOB simulator is used to generate the L2 states
     x should we do this all jaxified or e.g. with pandas?
       ---> could e.g. be vmapped over different periods? problem: time windows have heterogeneous lengths
       ---> use pandas for most of this. Only use jax if can make good use of parallelization and jitting with fixed sizes.
-    
+
     - time to first fill for new limit orders (ignore cancelled orders)
     - time to cancel / modification (ignore filled orders)
     - per time of day (define periods, e.g. 5 minute windows):
@@ -81,10 +81,10 @@ import statsmodels.api as sm
 
 #             # autocorr(mid_returns(m, b, '1min'), lags=1),
 #             # autocorr(mid_returns(m, b, '1min')**2, lags=10),
-            
+
 #             # time_to_first_fill(m),
 #             # time_to_cancel(m),
-            
+
 #             mean_per_interval(l1_volume(m, b), report_interval),
 #             mean_per_interval(total_volume(m, b, 10), report_interval),
 #             mean_per_interval(ask_limit_depth, report_interval),
@@ -106,7 +106,7 @@ import statsmodels.api as sm
 #         return real_metrics
 
 def mean_per_interval(
-        series: pd.Series, 
+        series: pd.Series,
         period: Union[DateOffset, timedelta, str] = '5Min'
     ):
     """
@@ -252,7 +252,7 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
     """
     # filter for new orders, cancellations, modifications
     orders = messages[
-        (messages.event_type == 1) | 
+        (messages.event_type == 1) |
         (messages.event_type == 2) |
         (messages.event_type == 3)
     ]
@@ -268,6 +268,9 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
         include_groups=False
     # get rid of nans from orders that were not cancelled
     ).dropna()
+    # always return a Series with a timedelta type
+    if len(del_t) == 0:
+        return pd.to_timedelta(pd.Series())
     return del_t
 
 def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> pd.Series:
@@ -377,7 +380,7 @@ def _order_levels(
     ask_levels = ask_levels // 2 + 1
 
     return ask_levels, bid_levels
-    
+
 def limit_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """
     Get levels of new limit orders.
