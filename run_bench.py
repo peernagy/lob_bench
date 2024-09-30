@@ -150,16 +150,17 @@ def run_benchmark(
     scoring_config_cond: dict[str, Any] = None,
     metric_config: dict[str, Any] = None,
 ) -> None:
-    if args.baseline:
-        gen_data_path = args.data_dir + args.stock + "/data_gen_baseline"
-    else:
-        gen_data_path = args.data_dir + args.stock + "/data_gen"
+
     if scoring_config is None:
         scoring_config = DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
     if metric_config is None:
         metric_config = DEFAULT_METRICS
+
+    gen_data_path = args.data_dir + args.stock + "/data_gen"
+    if args.model_name is not None:
+        gen_data_path += "_" + args.model_name
 
     print("[*] Loading data")
     loader = data_loading.Simple_Loader(
@@ -187,7 +188,7 @@ def run_benchmark(
             scores,
             score_dfs,
             args.save_dir
-            + f"/scores_{args.stock}_{time_str}.pkl"
+            + f"/scores_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
 
     if not args.uncond_only:
@@ -203,7 +204,7 @@ def run_benchmark(
             scores_cond,
             score_dfs_cond,
             args.save_dir
-            + f"/scores_cond_{args.stock}_{time_str}.pkl"
+            + f"/scores_cond_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
 
     print("[*] Done")
@@ -214,7 +215,7 @@ if __name__ == "__main__":
     parser.add_argument("--stock", type=str)
     parser.add_argument("--data_dir", default="data/", type=str)
     parser.add_argument("--save_dir", type=str)
-    parser.add_argument("--baseline", action="store_true")
+    parser.add_argument("--model_name", type=str)
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
     args = parser.parse_args()
