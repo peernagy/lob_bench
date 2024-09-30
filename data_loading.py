@@ -2,8 +2,10 @@ import pandas as pd
 from decimal import Decimal
 from typing import Optional
 import glob
+from tqdm import tqdm
 from dataclasses import dataclass
 import statsmodels.api as sm
+import warnings
 
 
 def get_price_range_for_level(
@@ -272,15 +274,19 @@ class Simple_Loader():
         # load sample lobster data
         real_message_paths = sorted(glob.glob(real_data_path + '/*message*.csv'))
         real_book_paths = sorted(glob.glob(real_data_path + '/*orderbook*.csv'))
+        assert len(real_message_paths) > 0, f"No real message files found in {real_data_path}"
         if len(real_book_paths) == 0:
             real_book_paths = [None] * len(real_message_paths)
 
         self.paths = []
-        for rmp, rbp, in zip(real_message_paths, real_book_paths):
+        for rmp, rbp, in tqdm(zip(real_message_paths, real_book_paths)):
             _, _, after = rmp.partition('real_id_')
             real_id = after.split('_')[0].split('.')[0]
 
             gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}_gen_id_*.csv'))
+            # warn if no gen data found
+            if len(gen_messsage_paths) == 0:
+                warnings.warn(f"No generated message files found for real_id={real_id}")
             gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}_gen_id_*.csv'))
 
             cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}.csv'))

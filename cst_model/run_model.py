@@ -28,6 +28,7 @@ def generate_data(
     data_dir: str,
     save_dir: str,
     seed: int = 0,
+    overwrite: bool = False,
 ):
     # create save_dir if it does not exist
     pathlib.Path(save_dir).mkdir(parents=True, exist_ok=True)
@@ -37,6 +38,16 @@ def generate_data(
 
     orderbook_files = sorted(glob.glob(data_dir + "/*orderbook*.csv"))
     for obf in tqdm(orderbook_files):
+        book_save_path = (
+            save_dir + "/"
+            + obf.rsplit("/", maxsplit=1)[-1].rsplit(".", maxsplit=1)[0]
+            + f"_gen_id_{seed}.csv"
+        )
+        # skip if file already exists
+        if (not overwrite) and (pathlib.Path(book_save_path).exists()):
+            print(f"Skipping {obf} as it already exists:", book_save_path)
+            continue
+
         # load book (conditioning data)
         lobster_book = data_loading.load_book_df(obf)
         lobster_msgs = data_loading.load_message_df(obf.replace("orderbook", "message"))
@@ -65,14 +76,17 @@ def generate_data(
 
         # save generated book data to csv
         cst.l2_book_to_pandas(l2_books).to_csv(
-            save_dir + "/" + obf.rsplit("/", maxsplit=1)[-1] + f"_gen_id_{seed}.csv",
+            book_save_path,
             index=False,
             header=False,
         )
         # save generated message data to csv
         lobster_msgs.to_pandas().to_csv(
             save_dir + "/"
-            + obf.rsplit("/", maxsplit=1)[-1].replace("orderbook", "message")
+            + obf
+            .rsplit("/", maxsplit=1)[-1]
+            .rsplit(".", maxsplit=1)[0]
+            .replace("orderbook", "message")
             + f"_gen_id_{seed}.csv",
             index=False,
             float_format='%.9f',
@@ -87,6 +101,7 @@ if __name__ == "__main__":
     argparser.add_argument("--params_file", type=str, default="cst_model/params/model_params.pkl")
     argparser.add_argument("--data_dir", type=str, default="data/data_cond/")
     argparser.add_argument("--save_dir", type=str, default="data/data_gen_bench/")
+    argparser.add_argument("--overwrite", action="store_true")
     args = argparser.parse_args()
 
     generate_data(
@@ -95,4 +110,5 @@ if __name__ == "__main__":
         params_file=args.params_file,
         data_dir=args.data_dir,
         save_dir=args.save_dir,
+        overwrite=args.overwrite,
     )

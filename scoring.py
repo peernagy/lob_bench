@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Callable, Iterable, List, Optional
+from tqdm import tqdm
 import plotting
 import partitioning
 import data_loading
@@ -148,7 +149,7 @@ def score_prediction_horizons(
         **kwargs
     ):
     """
-    Computes a table unconditional scores of all real data with 
+    Computes a table unconditional scores of all real data with
     """
     # unconditional scoring of all real data
     scores_real = partitioning.score_real(loader, scoring_fn)
@@ -285,8 +286,8 @@ def compute_divergence_metrics(
     loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
     plot_fn = lambda title, ax: plotting.error_divergence_plot(
         loss_horizons,
-        horizon_length, 
-        title=title, 
+        horizon_length,
+        title=title,
         xlabel='Prediction Horizon [messages]',
         ylabel='L1 score',
         ax=ax,
@@ -312,7 +313,7 @@ def run_benchmark(
     score_dfs = {}
     plot_fns = {}
 
-    for score_name, score_config in scoring_config_dict.items():
+    for score_name, score_config in tqdm(scoring_config_dict.items()):
 
         # conditional scoring
         if score_config.get("eval", None) is not None:
@@ -350,7 +351,7 @@ def run_benchmark(
                     score_kwargs=score_kwargs,
                     score_cond_kwargs=score_cond_kwargs,
                 )
-        
+
     return scores, score_dfs, plot_fns
 
 def summary_stats(
@@ -381,7 +382,7 @@ def summary_stats(
             ci_mean = np.percentile(bs_mean, q)
             ci_median = np.percentile(bs_median, q)
             ci_iqm = np.percentile(bs_iqm, q)
-            
+
             # return (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
             return_dict[metric_name] = (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
         # return aggr_mean, aggr_median, aggr_iqm

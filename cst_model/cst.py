@@ -8,6 +8,7 @@ import chex
 import matplotlib.pyplot as plt
 from typing import Any
 from scipy.optimize import curve_fit
+from functools import partial
 
 
 # FIXME: this is a hack to import from parent dir
@@ -50,12 +51,12 @@ class Message:
 
 def init_params(params_dict: dict[str, Any]) -> CSTParams:
     params = CSTParams(
-        qty=jnp.round(params_dict["lo_size"]).astype(jnp.int32),
-        tick_size=params_dict["tick_size"],
-        num_ticks=params_dict["num_ticks"],
-        lo_k=params_dict["lo_k"],
-        lo_alpha=params_dict["lo_alpha"],
-        mo_mu=params_dict["mo_mu"],
+        qty=int(jnp.round(params_dict["lo_size"]).astype(jnp.int32)),
+        tick_size=int(params_dict["tick_size"]),
+        num_ticks=int(params_dict["num_ticks"]),
+        lo_k=int(params_dict["lo_k"]),
+        lo_alpha=int(params_dict["lo_alpha"]),
+        mo_mu=int(params_dict["mo_mu"]),
     )
     return params, params_dict["lo_lambda"], params_dict["co_theta"]
 
@@ -64,6 +65,7 @@ def lo_rate(depth_i, k, alpha):
     return k / (depth_i ** alpha)
 
 
+@jax.jit
 def get_event_base_rates(
     params: CSTParams,
     cancel_rates: jax.Array,
@@ -102,6 +104,7 @@ def sample_event(rates: jax.Array, rng: jax.Array) -> int:
     return event
 
 
+@partial(jax.jit, static_argnums=(1,))
 def init_book(
     l2_book_lobster: jax.Array,
     params: CSTParams,
@@ -128,6 +131,7 @@ def init_book(
     )
 
 
+@partial(jax.jit, static_argnums=(2,))
 def get_l2_book(book: Book, params: CSTParams, n_lvls: int) -> jax.Array:
     ask_idx = jnp.argwhere(book.asks, size=n_lvls, fill_value=jnp.nan).squeeze()
     ask_p = (book.best_bid + (ask_idx + 1) * params.tick_size).astype(jnp.int32)
