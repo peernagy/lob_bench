@@ -26,8 +26,8 @@ def hist(
     gen['type'] = 'generated'
     data = pd.concat([real, gen], axis=0)
     data.columns = ['x', 'type']
-
     # display(data)
+    print("plotting.py: n_Bins to use in histogram",len(bins))
     sns.histplot(
         data, x='x', hue='type', #kde=True,
         alpha=0.5, stat='density', multiple='layer', line_kws={'linewidth': 2},

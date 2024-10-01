@@ -331,7 +331,7 @@ def _get_m_p_merged(mb_df: pd.DataFrame,ticksize:int =100):
     delta_mid=mid_final-mid_init
     return delta_mid/ticksize,p
 
-def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
+def impact_compare(loader:Simple_Loader,ticker:str="BLANK",model="BLANK",ticksize=100):
     x=(10** np.arange(0.3,2.4,step=0.1)).astype(int)
     events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
     ys_real=[]
@@ -340,7 +340,7 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
     confidence_ints_gen=[]
     for event in events:
         print("Calculating for event type: ", event)
-        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,10000,(event,i,ticksize),loader) for i in x])
+        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,1000,(event,i,ticksize),loader) for i in x])
         r_m,r_ci=zip(*r)
         g_m,g_ci=zip(*g)
         ys_real.append(np.array(r_m))
@@ -353,9 +353,9 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
     np.save("x_vals_"+ticker,x)
 
 
-    with open('cis_real'+ticker+'.pickle', 'wb') as f:
+    with open('cis_real'+ticker+'_'+model+'.pickle', 'wb') as f:
         pickle.dump(confidence_ints_real,f)
-    with open('cis_gen'+ticker+'.pickle', 'wb') as f:
+    with open('cis_gen'+ticker+'_'+model+'.pickle', 'wb') as f:
         pickle.dump(confidence_ints_gen,f)
     
     plot_linlog_subplots(x,[ys_real,ys_gen],[confidence_ints_real,confidence_ints_gen],
@@ -363,7 +363,8 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
                      suptitle="Tick-normalised microscopic response functions for stock ticker: "+ticker,
                      titles=["Real Data Sequences","Generated Data Sequences"],
                      ylabel="Rπ (ticks)",
-                     ticker=ticker)
+                     ticker=ticker,
+                     model=model)
 
 
     diff={}
@@ -372,7 +373,7 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",ticksize=100):
         print("Sum of abs differences for ",event," events:",delta)
         diff[event]=delta
     abs_diffs=np.array(list(diff.values()))
-    np.save("comparison_graph"+ticker,abs_diffs,)
+    np.save("comparison_graph_"+ticker+"_"+model,abs_diffs,)
     return np.mean(abs_diffs)
 
 def impact_analyse(m_seqs,b_seqs):
@@ -447,7 +448,7 @@ def plot_linlog(x,ys,errs,legend,colors=['b','r','g','c','m','y'],title="Title",
     ax.set_ylabel(ylabel)
     ax.set_ylim(np.array(ys_lims)*1.2)
 
-def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace",ticker:str="BLANK"):
+def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace",ticker:str="BLANK",model:str="BLANK"):
     fig,axarr = plt.subplots(1,len(ys),sharey=True)
     plt.subplots_adjust(wspace=0.05)
     fig.set_figwidth(12)
@@ -473,7 +474,7 @@ def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,tit
     for a in axarr:
         ax.set_ylim(np.array(ys_lims)*1.2)
     fig.suptitle(suptitle)
-    fig.savefig('compare_'+ticker+'.png', dpi=fig.dpi)
+    fig.savefig('compare_'+ticker+'_'+model+'.png', dpi=fig.dpi)
 
  
 #USe the below for macro impact generative loop. 
