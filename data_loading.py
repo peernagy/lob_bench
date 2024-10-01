@@ -290,6 +290,7 @@ class Simple_Loader():
             elif len(cond_message_path) == 1:
                 cond_message_path = cond_message_path[0]
             else:
+                print(cond_message_path)
                 raise ValueError(f"Multiple conditional message files found. (real_id={real_id})")
             
             if len(cond_book_path) == 0:
@@ -297,6 +298,8 @@ class Simple_Loader():
             elif len(cond_book_path) == 1:
                 cond_book_path = cond_book_path[0]
             else:
+                print(cond_book_path)
+
                 raise ValueError(f"Multiple conditional book files found. (real_id={real_id})")
             
             date_str = rmp.split('/')[-1].split('_')[1]

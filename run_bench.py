@@ -17,6 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import seaborn as sns
+import math
 
 print(plt)
 
@@ -136,7 +137,18 @@ def run_bench(model,stock,data_dir):
     scoring_config_dict,
     default_metric=metrics_fns_dict
     )
+
+    keys=list(scores.keys())
+    for score_name in keys:
+        if math.isnan(scores[score_name]['wasserstein'][0]):
+            print("Removing:",score_name)
+            del scores[score_name]
+            del score_dfs[score_name]
+            del plot_fns[score_name]
+
     summary_stats=scoring.summary_stats(scores, bootstrap=True)
+
+
 
     for loss_metric in summary_stats.keys():
         scatter_vals = summary_stats[loss_metric]
@@ -153,6 +165,7 @@ def run_bench(model,stock,data_dir):
         )
         plt.title(f"{stock} Model Summary ({loss_metric})", fontweight='bold')
         plt.savefig(f'images/summary_stats_{loss_metric}_{stock}_{model}.png', dpi=300, bbox_inches='tight')
+    
 
     labels = list(scores.keys())
     # pal = sns.color_palette("rocket", len(scores))
@@ -310,6 +323,14 @@ def run_bench(model,stock,data_dir):
     scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
         loader, scoring_config_dict, metrics.l1_by_group,
         divergence=True)
+    
+    keys=list(scores_.keys())
+    for score_name in keys:
+        if math.isnan(scores_[score_name]['wasserstein'][0]):
+            print("Removing:",score_name)
+            del scores_[score_name]
+            del score_dfs_[score_name]
+            del plot_fns_[score_name]
 
     plotting.hist_subplots(plot_fns_, (10, 25))
     plt.suptitle(f'L1 Divergence ({stock})', fontweight='bold')

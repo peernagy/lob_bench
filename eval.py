@@ -268,6 +268,8 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
         include_groups=False
     # get rid of nans from orders that were not cancelled
     ).dropna()
+    # if(pd.isnull(del_t.min())):
+    #     print("orders at issue in eval.py is: {}",orders)
     return del_t
 
 def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> pd.Series:

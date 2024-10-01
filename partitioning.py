@@ -224,7 +224,7 @@ def group_by_score(
     else:
         if bin_method is not None:
             # ignore nan scores
-            all_scores = all_scores[~np.isnan(all_scores)]
+            all_scores = all_scores[(~np.isnan(all_scores)) & (~np.isinf(all_scores))]            
             thresholds = np.histogram_bin_edges(all_scores, bins=bin_method)
         elif n_bins is not None:
             # thresholds = np.linspace(min_score, max_score, n_bins+1)
