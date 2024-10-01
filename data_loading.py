@@ -343,12 +343,18 @@ class Simple_Loader():
         b_gen = tuple(lambda: load_book_df(b) for b in gbp)
 
         def m_cond():
-            m = load_message_df(cmp)
-            m = add_date_to_time(m, date)
-            return m
+            if cmp is not None:
+                m = load_message_df(cmp)
+                m = add_date_to_time(m, date)
+                return m
+            else:
+                return None
 
         def b_cond():
-            return load_book_df(cbp)
+            if cbp is not None:
+                return load_book_df(cbp)
+            else:
+                return None
 
         s = Lobster_Sequence(
             date,
