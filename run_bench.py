@@ -1,7 +1,8 @@
 from typing import Any
 import numpy as np
+import pandas as pd
 import pathlib
-
+from glob import glob
 import pickle
 import gzip
 import argparse
@@ -160,6 +161,7 @@ def run_benchmark(
 
     gen_data_path = args.data_dir + args.stock + "/data_gen"
     if args.model_name is not None:
+        args.model_name = ""
         gen_data_path += "_" + args.model_name
 
     print("[*] Loading data")
@@ -189,7 +191,7 @@ def run_benchmark(
             scores,
             score_dfs,
             args.save_dir
-            + f"/scores_{args.stock}_{args.model_name}_{time_str}.pkl"
+            + f"/scores_uncond_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
         print("...done")
 
