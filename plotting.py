@@ -8,18 +8,16 @@ from partitioning import flatten
 
 
 def hist(
-        real,
-        gen,
-        title: str= '',
-        xlabel: str= '',
-        ylabel: str= 'density',
-        *,
-        bins: Optional[int|str|list[float]] = 'auto',
-        binwidth: Optional[float] = None,
-        ax: Optional[plt.Axes] = None,
-    ):
-    """
-    """
+    real,
+    gen,
+    title: str= '',
+    xlabel: str= '',
+    ylabel: str= 'density',
+    *,
+    bins: Optional[int|str|list[float]] = 'auto',
+    binwidth: Optional[float] = None,
+    ax: Optional[plt.Axes] = None,
+):
     real = pd.DataFrame(flatten(real))
     real['type'] = 'real'
     gen = pd.DataFrame(flatten(gen))
@@ -46,17 +44,14 @@ def hist(
 
 
 def facet_grid_hist(
-        score_df: pd.DataFrame,
-        var_eval: str = '',
-        var_cond: str = '',
-        # ylabel: str= 'density',
-        filter_groups_below_weight: Optional[float] = None,
-        bins = 'auto',
-        binwidth: Optional[float] = None,
-    ):
-    """
-    """
-
+    score_df: pd.DataFrame,
+    var_eval: str = '',
+    var_cond: str = '',
+    # ylabel: str= 'density',
+    filter_groups_below_weight: Optional[float] = None,
+    bins = 'auto',
+    binwidth: Optional[float] = None,
+):
     score_df = score_df.copy()
     # add group weight to filter on
     score_df['weight'] = score_df.groupby('group').transform('count')['score'] / len(score_df)
@@ -101,25 +96,23 @@ def facet_grid_hist(
 
 
 def scatter(
-        score_df: pd.DataFrame,
-        title: str= '',
-        xlabel: str= 'Group',
-        ylabel: str= 'Score',
-        ax: Optional[plt.Axes] = None,
-    ):
-    """
-    """
+    score_df: pd.DataFrame,
+    title: str= '',
+    xlabel: str= 'Group',
+    ylabel: str= 'Score',
+    ax: Optional[plt.Axes] = None,
+):
     sns.scatterplot(data=score_df, x='group', y='score', hue='type')
     _finish_plot(title, xlabel, ylabel, ax)
 
 
 def line(
-        score_df: pd.DataFrame,
-        title: str= '',
-        xlabel: str= 'Group',
-        ylabel: str= 'Score',
-        ax: Optional[plt.Axes] = None,
-    ):
+    score_df: pd.DataFrame,
+    title: str= '',
+    xlabel: str= 'Group',
+    ylabel: str= 'Score',
+    ax: Optional[plt.Axes] = None,
+):
     """
     """
     sns.lineplot(
@@ -130,13 +123,13 @@ def line(
 
 
 def error_divergence_plot(
-        loss_horizons: list[tuple[float, np.ndarray]],
-        horizon_length: int,
-        title: str= '',
-        xlabel: str= 'Prediction Horizon',
-        ylabel: str= 'Error',
-        ax: Optional[plt.Axes] = None,
-    ):
+    loss_horizons: list[tuple[float, np.ndarray]],
+    horizon_length: int,
+    title: str= '',
+    xlabel: str= 'Prediction Horizon',
+    ylabel: str= 'Error',
+    ax: Optional[plt.Axes] = None,
+):
     """
     """
     labels = [f"{period}-{period+horizon_length}"
@@ -163,9 +156,9 @@ def error_divergence_plot(
 
 
 def hist_subplots(
-        plot_fns: dict[str, Callable[[str, plt.Axes], None]],
-        figsize: Optional[tuple[int, int]] = None,
-    ):
+    plot_fns: dict[str, Callable[[str, plt.Axes], None]],
+    figsize: Optional[tuple[int, int]] = None,
+):
     """
     """
     fig, axs = plt.subplots(np.ceil(len(plot_fns) / 2).astype(int), 2, figsize=figsize)
@@ -207,15 +200,15 @@ def hist_subplots(
 
 def spider_plot(
     scores_models: dict[str, Any],
-    stock: str,
     metric_str: str,
     title: str = '',
     plot_cis: bool = False,
+    save_path: Optional[str] = None,
 ) -> go.Figure:
 
     assert len(scores_models) <= 4, "Only max 4 models can be compared at once"
 
-    default_cols = [
+    default_colors = [
         "rgba(0.12156863, 0.46666667, 0.70588235, 0.2)",
         "rgba(1.0, 0.59607843, 0.2, 0.2)",
         "rgba(0.16862745, 0.78039216, 0.45098039, 0.2)",
@@ -228,10 +221,11 @@ def spider_plot(
         # labels = [s.replace("_", "<br>") for s in list(scores.keys())]
         labels = []
         for s in scores.keys():
-            s = s.split("_")
-            ln_break_at = len(s) // 2
-            s = " ".join(s[:ln_break_at]) + "<br>" + " ".join(s[ln_break_at:])
-            labels.append(s)
+            # s = s.split("_")
+            # ln_break_at = len(s) // 2
+            # s = " ".join(s[:ln_break_at]) + "<br>" + " ".join(s[ln_break_at:])
+            # labels.append(s)
+            labels.append(s.replace("_", " "))
 
         # pal = sns.color_palette("rocket", len(scores))
         losses = np.array([s[metric_str][0]for s in scores.values()])
@@ -243,10 +237,10 @@ def spider_plot(
             mode='lines',
             fill='toself',
             # fillcolor='rgba(31, 119, 180, 0.2)',  # Set opacity to 0.2
-            fillcolor=default_cols[i],
+            fillcolor=default_colors[i],
             name=model,
             # line=dict(color='rgba(31, 119, 180, 1)'),
-            line=dict(color=default_cols[i]),
+            line=dict(color=default_colors[i]),
         ))
         if plot_cis:
             fig.add_trace(go.Scatterpolar(
@@ -254,7 +248,7 @@ def spider_plot(
                 theta=labels,
                 mode='lines',  # Add this line to remove markers
                 name='CI lower',
-                line=dict(color=default_cols[i], width=0),
+                line=dict(color=default_colors[i], width=0),
                 showlegend=False,
             ))
             fig.add_trace(go.Scatterpolar(
@@ -262,94 +256,205 @@ def spider_plot(
                 theta=labels,
                 mode='lines',  # Add this line to remove markers
                 fill='tonext',
-                fillcolor=default_cols[i],
+                fillcolor=default_colors[i],
                 name='CI upper',
-                line=dict(color=default_cols[i], width=0),
+                line=dict(color=default_colors[i], width=0),
                 showlegend=False,
             ))
 
+    # get minimum score to set the range
+    max_loss = max([
+        s[metric_str][0] for scores in scores_models.values()
+            for s in scores.values()
+    ])
     fig.update_layout(
         width=600,
-        height=500,
+        height=400,
         polar=dict(
+            angularaxis=dict(
+                rotation=180 - 180/len(labels),
+                direction='clockwise'  # Set the rotation direction (clockwise or counterclockwise)
+            ),
             radialaxis=dict(
                 visible=True,
-                dtick=0.2,
-                range=[-1.2, 0]
-        )),
+                dtick=0.5,
+                range=[-max_loss*1.1, 0],
+                # angle=90,
+                # tickangle=90,
+            ),
+        ),
         showlegend=True,
-        title=f'{title} ({stock})',
-        # margin=dict(l=20, r=20, t=40, b=40),
-        margin=dict(l=100, r=100, t=100, b=100),
+        title=f'{title}',
+        margin=dict(l=200, r=200, t=50, b=50),
         legend=dict(
             orientation='h',  # Horizontal orientation
             yanchor='bottom',  # Anchor the legend to the bottom
-            y=-0.4,  # Position it below the plot
+            y=-0.2,#-0.4,  # Position it below the plot
             xanchor='center',  # Center the legend
-            x=0.5  # Position it horizontally centered
+            x=0.5,  # Position it horizontally centered
         ),
         font=dict(size=18),
     )
 
-    fig.write_image(f"images/{metric_str}_spiderplt_{stock}.png")
+    # fig.write_image(f"images/spiderplt_{stock}_{metric_str}.png")
+    if save_path is not None:
+        fig.write_image(save_path)
     return fig
 
 
 def summary_plot(
-    summary_stats_models: dict[str, dict[str, Any]],
-    stock: str,
+    summary_stats_stocks: dict[str, dict[str, Any]],
+    # stock: str,
     xranges: Optional[list[tuple[float, float]]] = None,
+    save_path: Optional[str] = None,
 ):
     # collect all unique stats used
+    n_stocks = len(summary_stats_stocks)
     stat_names = []
-    for _, summary_stats in summary_stats_models.items():
-        stats_names = list(summary_stats.keys())
-        for stat_name in stats_names:
-            if stat_name not in stat_names:
-                stat_names.append(stat_name)
+    for stock, summary_stats_models in summary_stats_stocks.items():
+        for _, summary_stats in summary_stats_models.items():
+            stats_names = list(summary_stats.keys())
+            for stat_name in stats_names:
+                if stat_name not in stat_names:
+                    stat_names.append(stat_name)
+    n_stats = len(stat_names)
+    fig, axs = plt.subplots(n_stats * n_stocks, 1, figsize=(5, (2+(n_stocks+1)*n_stats)/2.5))
+    plt.subplots_adjust(hspace=0.6)  # Set some space for all
 
-    fix, axs = plt.subplots(2, 1, figsize=(5, 3))
+    def _get_ax(i_stat, i_stock):
+        return axs[i_stat * n_stocks + i_stock]
 
-    # error statistics (e.g. L1, Wasserstein)
-    for i_stat, loss_metric in enumerate(stat_names):
-        # plt.figure(figsize=(5,2))
-        # models: e.g. genAI vs benchmark
-        for i_model, (model, summary_stats) in enumerate(summary_stats_models.items()):
-            if loss_metric in summary_stats:
-                scatter_vals = summary_stats[loss_metric]
-                scatter_x = [val[0] for val in scatter_vals]
-                cis = np.array([val[1] for val in scatter_vals])
-                axs[i_stat].scatter(
-                    scatter_x,
-                    ['mean', 'median', 'IQM'],
-                    color=f'C{i_model}',
-                    marker='x',
-                    label=model,
-                )
-                # add errorbars
-                axs[i_stat].errorbar(
-                    x=cis.mean(axis=1),
-                    y=['mean', 'median', 'IQM'],
-                    xerr=np.diff(cis, axis=1).T[0],
-                    fmt='none',
-                    color=f'C{i_model}',
-                )
+    for i_stock, (stock, summary_stats_models) in enumerate(summary_stats_stocks.items()):
+        # error statistics (e.g. L1, Wasserstein)
+        for i_stat, loss_metric in enumerate(stat_names):
+            # plt.figure(figsize=(5,2))
+            # models: e.g. genAI vs benchmark
+            for i_model, (model, summary_stats) in enumerate(summary_stats_models.items()):
+                if loss_metric in summary_stats:
+                    scatter_vals = summary_stats[loss_metric]
+                    scatter_x = [val[0] for val in scatter_vals]
+                    cis = np.array([val[1] for val in scatter_vals])
+                    ax = _get_ax(i_stat, i_stock)
+                    ax.scatter(
+                        scatter_x,
+                        ['mean', 'median', 'IQM'],
+                        color=f'C{i_model}',
+                        marker='x',
+                        label=model,
+                    )
+                    # add errorbars
+                    ax.errorbar(
+                        x=cis.mean(axis=1),
+                        y=['mean', 'median', 'IQM'],
+                        xerr=np.diff(cis, axis=1).T[0],
+                        fmt='none',
+                        color=f'C{i_model}',
+                    )
+                    ax.set_ylim(-1, 3)
 
-        # set xrange
-        # plt.xlim(*xranges[i])
-        axs[i_stat].set_title(
-            f"{stock} Model Summary ({loss_metric})",
-            fontweight='bold'
+                    # Add text to the left of the y-axis in the first subplot
+                    ax.text(
+                        -0.25, 0.5, stock, fontsize=12,
+                        ha='center', va='center',
+                        transform=ax.transAxes
+                    )
+
+            # set xrange
+            # plt.xlim(*xranges[i])
+            _get_ax(i_stat, i_stock).set_title(
+                loss_metric.capitalize(),
+                fontweight='bold',
+                loc='left', #pad=-20,
+            )
+
+    # set x-axis limits
+    for i_stat in range(n_stats):
+        if xranges is None:
+            # get min and max x limits for all stocks
+            xlims = [_get_ax(i_stat, i_stock) for i_stock in range(n_stocks)]
+            min_x, max_x = (
+                min([ax.get_xlim()[0] for ax in xlims]),
+                max([ax.get_xlim()[1] for ax in xlims])
+            )
+        else:
+            min_x, max_x = xranges[i_stat]
+
+        for i_stock in range(n_stocks):
+            _get_ax(i_stat, i_stock).set_xlim(min_x, max_x)
+
+
+        for i_stock in range(1, n_stocks):
+            ax_ref = _get_ax(i_stat, i_stock-1)
+            ax = _get_ax(i_stat, i_stock)
+
+            # remove x-axis labels for all but the last stock
+            ax.set_xticklabels([])
+
+            # remove space between subplots for the same stat
+            ax.set_position([
+                ax.get_position().x0,
+                ax_ref.get_position().y0 + ax_ref.get_position().height,
+                ax.get_position().width,
+                ax.get_position().height
+            ])
+
+    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -1.5), ncol=2)
+    if save_path is not None:
+        plt.savefig(
+            save_path,
+            dpi=300, bbox_inches='tight'
         )
-        # plt.legend()
 
-    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2)
-    plt.tight_layout(pad=2.0)
-    # plt.subplots_adjust(left=0.1, right=0.9, top=0.85, bottom=0.2)
-    plt.savefig(
-        f'images/summary_stats_{loss_metric}_{stock}.png',
-        dpi=300, bbox_inches='tight'
+
+def loss_bars(
+    data: pd.DataFrame,
+    stock: str,
+    metric: str,
+    save_path: Optional[str] = None,
+) -> plt.Axes:
+    data_ = data.loc[(data.metric==metric) & (data.stock==stock)].copy()
+    y_err = data_.loc[:, ["ci_low", "ci_high"]].diff(axis=1).iloc[:,1] / 2
+    y_coords = data_.loc[:, ["ci_low", "ci_high"]].mean(axis=1)
+    n_models = len(data_.model.unique())
+
+    data_.score = data_.score.str.replace('_', ' ').str.capitalize()
+
+    fig = plt.figure(figsize=(10, 6))
+    # BAR PLOT
+    ax = sns.barplot(
+        data=data_,
+        x="score",
+        y="mean",
+        hue="model",
     )
+    # ERROR BARS
+    # get x-coords of bars only (without the legend elements)
+    x_coords = [p.get_x() + 0.5*p.get_width() for p in ax.patches][:-n_models]
+    ax.errorbar(
+        x=x_coords,
+        y=y_coords,
+        yerr=y_err,
+        fmt="none",
+        c="k",
+        elinewidth=3
+    )
+    plt.title(
+        f'{metric.capitalize()} Loss of Generated Data Distributions ({stock})',
+        fontsize=16
+    )
+    plt.ylabel(f'{metric.capitalize()} Loss', fontsize=14)
+    plt.xlabel('')
+    # Customize tick labels
+    _ = plt.xticks(rotation=90)
+    ax.tick_params(axis='x', labelsize=14)  # X tick labels font size
+    ax.tick_params(axis='y', labelsize=14)  # Y tick labels font size
+
+    if save_path is not None:
+        plt.savefig(
+            save_path,
+            dpi=300, bbox_inches='tight'
+        )
+    return ax
 
 
 def _finish_plot(
