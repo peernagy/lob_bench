@@ -170,16 +170,16 @@ def hist_subplots(
             if legend:
                 legend.remove()
 
-    lines_labels = [ax.get_legend_handles_labels() for ax in axs]
-    lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
-    # fig.legend(lines, labels)
-    plt.legend(
-        lines,
-        labels,
-        loc='upper center',
-        bbox_to_anchor=(0.5, -1.5),
-        ncol=2
-    )
+    # lines_labels = [ax.get_legend_handles_labels() for ax in axs]
+    # lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
+    # # fig.legend(lines, labels)
+    # plt.legend(
+    #     lines,
+    #     labels,
+    #     loc='upper center',
+    #     bbox_to_anchor=(0.5, -1.5),
+    #     ncol=2
+    # )
     if suptile is not None:
         plt.suptitle(suptile, fontsize=16, fontweight='bold', y=1.002)
     plt.tight_layout()
@@ -407,7 +407,7 @@ def summary_plot(
         handles, labels,
         loc='upper center',
         bbox_to_anchor=(0.5, -1.5),
-        ncol=2
+        ncol=3
     )
 
     if save_path is not None:
@@ -450,8 +450,9 @@ def loss_bars(
         elinewidth=3
     )
     plt.title(
-        f'{metric.capitalize()} Loss of Generated Data Distributions ({stock})',
-        fontsize=16
+        f'{metric.capitalize()} Loss ({stock})',
+        fontsize=16,
+        fontweight='bold'
     )
     plt.ylabel(f'{metric.capitalize()} Loss', fontsize=14)
     plt.xlabel('')

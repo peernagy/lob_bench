@@ -68,12 +68,12 @@ def run_plotting(
                 score_name: plotting.get_div_plot_fn(score_)
                     for score_name, score_ in score_model.items()
             }
-        plotting.hist_subplots(
-            plot_fns,
-            figsize=(10, 25),
-            suptile=f"L1 Divergence {stock} {model}",
-            save_path=f'{plot_dir}/divergence_{stock}_{model}.png'
-        )
+            plotting.hist_subplots(
+                plot_fns,
+                figsize=(10, 22),
+                suptile=f"L1 Divergence {stock} {model}",
+                save_path=f'{plot_dir}/divergence_{stock}_{model}.png'
+            )
 
     # plot individual histograms of scores
     print("[*] Plotting histograms")
@@ -86,7 +86,7 @@ def run_plotting(
 
             plotting.hist_subplots(
                 plot_fns,
-                figsize=(10, 25),
+                figsize=(10, 22),
                 suptile=f"{stock} {model}",
                 save_path=f"{plot_dir}/hist_{stock}_{model}.png",
             )
