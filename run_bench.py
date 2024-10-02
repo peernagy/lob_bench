@@ -160,7 +160,7 @@ def run_benchmark(
         metric_config = DEFAULT_METRICS
 
     gen_data_path = args.data_dir + args.stock + "/data_gen"
-    if args.model_name is not None:
+    if args.model_name is None:
         args.model_name = ""
         gen_data_path += "_" + args.model_name
 
