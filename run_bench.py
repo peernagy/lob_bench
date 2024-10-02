@@ -177,7 +177,7 @@ def run_benchmark(
         s.materialize()
 
     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if not args.cond_only:
+    if (not args.cond_only) and (not args.div_only):
         print("[*] Running unconditional scoring")
         scores, score_dfs, plot_fns = scoring.run_benchmark(
             loader,
@@ -195,7 +195,7 @@ def run_benchmark(
         )
         print("...done")
 
-    if not args.uncond_only:
+    if (not args.uncond_only) and (not args.div_only):
         print("[*] Running conditional scoring")
         scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
             loader,
@@ -213,6 +213,22 @@ def run_benchmark(
         )
         print("...done")
 
+    if (not args.cond_only) and (not args.uncond_only):
+        print("[*] Running divergence scoring")
+        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+            loader, scoring_config, metrics.l1_by_group,
+            divergence_horizon=args.divergence_horizon,
+            divergence=True
+        )
+        print("[*] Saving results...")
+        save_results(
+            scores_,
+            score_dfs_,
+            args.save_dir
+            + f"/scores_div_{args.stock}_{args.model_name}_"
+            + f"{args.divergence_horizon}_{time_str}.pkl"
+        )
+
     print("[*] Done")
 
 
@@ -224,6 +240,8 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str)
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
+    parser.add_argument("--div_only", action="store_true")
+    parser.add_argument("--divergence_horizon", type=int, default=100)
     args = parser.parse_args()
 
     assert not (args.uncond_only and args.cond_only), \

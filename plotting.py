@@ -64,11 +64,6 @@ def facet_grid_hist(
         aspect=4, height=1
     )
 
-    # TODO: remove this to make it general
-    # x_ranges = [
-    #     ()
-    # ]
-
     for i, (group, ax) in enumerate(g.axes_dict.items()):
         df_ = score_df.loc[score_df["group"] == group]
         # weight = len(df_) / len(score_df)
@@ -152,36 +147,20 @@ def error_divergence_plot(
     ax.errorbar(
         x=labels, y=cis.mean(axis=0), yerr=np.diff(cis, axis=0) / 2,
         fmt='none')
+    ax.tick_params(axis='both', which='major', labelsize=14)
     _finish_plot(title, xlabel, ylabel, ax)
 
 
 def hist_subplots(
     plot_fns: dict[str, Callable[[str, plt.Axes], None]],
     figsize: Optional[tuple[int, int]] = None,
+    suptile: Optional[str] = None,
+    save_path: Optional[str] = None,
 ):
     """
     """
     fig, axs = plt.subplots(np.ceil(len(plot_fns) / 2).astype(int), 2, figsize=figsize)
     axs = axs.reshape(-1)
-
-    # x_ranges = [
-    #     (100, 1000),
-    #     (-1, 1),
-    #     (-22, 8),
-    #     (5, 25),
-    #     (0, 20000),
-    #     (0, 20000),
-    #     (0, 100000),
-    #     (0, 100000),
-    #     (0, 1000),
-    #     (0, 1000),
-    #     (0, 1000),
-    #     (0, 1000),
-    #     (1, 10),
-    #     (1, 10),
-    #     (1, 10),
-    #     (1, 10),
-    # ]
 
     for i, (name, fn) in enumerate(plot_fns.items()):
         fn(name, axs[i])
@@ -193,9 +172,22 @@ def hist_subplots(
 
     lines_labels = [ax.get_legend_handles_labels() for ax in axs]
     lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
-    fig.legend(lines, labels)
-
+    # fig.legend(lines, labels)
+    plt.legend(
+        lines,
+        labels,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -1.5),
+        ncol=2
+    )
+    if suptile is not None:
+        plt.suptitle(suptile, fontsize=16, fontweight='bold', y=1.002)
     plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(
+            save_path,
+            dpi=300, bbox_inches='tight'
+        )
 
 
 def spider_plot(
@@ -332,14 +324,17 @@ def summary_plot(
             for i_model, (model, summary_stats) in enumerate(summary_stats_models.items()):
                 if loss_metric in summary_stats:
                     scatter_vals = summary_stats[loss_metric]
-                    scatter_x = [val[0] for val in scatter_vals]
+                    scatter_x = np.array([val[0] for val in scatter_vals])
                     cis = np.array([val[1] for val in scatter_vals])
                     ax = _get_ax(i_stat, i_stock)
+                    if np.isnan(scatter_x).all():
+                        continue
+
                     ax.scatter(
                         scatter_x,
                         ['mean', 'median', 'IQM'],
-                        color=f'C{i_model}',
                         marker='x',
+                        color=f"C{i_model}",
                         label=model,
                     )
                     # add errorbars
@@ -398,7 +393,23 @@ def summary_plot(
                 ax.get_position().height
             ])
 
-    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -1.5), ncol=2)
+    # Collect handles and labels for the combined legend
+    handles, labels = [], []
+    seen_labels = set()
+    for ax in axs.flatten():
+        h, l = ax.get_legend_handles_labels()
+        for handle, label in zip(h, l):
+            if label not in seen_labels:
+                handles.append(handle)
+                labels.append(label)
+                seen_labels.add(label)
+    plt.legend(
+        handles, labels,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -1.5),
+        ncol=2
+    )
+
     if save_path is not None:
         plt.savefig(
             save_path,
@@ -413,13 +424,11 @@ def loss_bars(
     save_path: Optional[str] = None,
 ) -> plt.Axes:
     data_ = data.loc[(data.metric==metric) & (data.stock==stock)].copy()
-    y_err = data_.loc[:, ["ci_low", "ci_high"]].diff(axis=1).iloc[:,1] / 2
-    y_coords = data_.loc[:, ["ci_low", "ci_high"]].mean(axis=1)
     n_models = len(data_.model.unique())
 
     data_.score = data_.score.str.replace('_', ' ').str.capitalize()
 
-    fig = plt.figure(figsize=(10, 6))
+    fig = plt.figure(figsize=(6, 3.6))
     # BAR PLOT
     ax = sns.barplot(
         data=data_,
@@ -430,6 +439,8 @@ def loss_bars(
     # ERROR BARS
     # get x-coords of bars only (without the legend elements)
     x_coords = [p.get_x() + 0.5*p.get_width() for p in ax.patches][:-n_models]
+    y_coords = data_.loc[:, ["ci_low", "ci_high"]].dropna().mean(axis=1)
+    y_err = data_.loc[:, ["ci_low", "ci_high"]].dropna().diff(axis=1).iloc[:,1] / 2
     ax.errorbar(
         x=x_coords,
         y=y_coords,
@@ -466,10 +477,67 @@ def _finish_plot(
     """
     """
     if ax is not None:
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
+        ax.set_xlabel(xlabel, fontsize=14)
+        ax.set_ylabel(ylabel, fontsize=14)
+        ax.set_title(title, fontsize=18)
     else:
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.title(title)
+        plt.xlabel(xlabel, fontsize=14)
+        plt.ylabel(ylabel, fontsize=14)
+        plt.title(title, fontsize=18)
+
+
+def get_plot_fn(score_df):
+    unique_scores = score_df.score.unique()
+    if unique_scores.shape[0] < 80:
+        # discrete = True
+        min_diff = pd.Series(
+            score_df.score.unique()
+        ).sort_values().diff().min()
+        binwidth = min_diff if min_diff > 0 else 1
+    else:
+        # discrete = False
+        binwidth = None
+
+    def _score_hist_plot(name, ax):
+        # mean, std = score_df.score.mean(), score_df.score.std()
+        # xmin = max(mean - 3*std, score_df.score.min())
+        # xmax = min(mean + 3*std, score_df.score.max())
+        # get outliers based on quantiles
+        q1, q3 = score_df.score.quantile([0.25, 0.75])
+        iqr = q3 - q1
+        lower_bound = q1 - 2 * iqr
+        upper_bound = q3 + 2 * iqr
+        xmin = max(score_df.score.min(), lower_bound)
+        xmax = min(score_df.score.max(), upper_bound)
+        if xmin == xmax:
+            xmin, xmax = score_df.score.quantile([0.01, 0.99])
+        sns.histplot(
+            score_df,
+            x="score",
+            hue="type",
+            stat="density",
+            common_bins=True,
+            ax=ax,
+            # discrete=discrete,
+            binwidth=binwidth,
+        )
+        ax.set_title(name.capitalize().replace("_", " "), fontsize=18)
+        ax.set_xlabel("")
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylabel("Density", fontsize=14)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+
+    return _score_hist_plot
+
+
+def get_div_plot_fn(scores, horizon_length=100):
+    def _div_plot_fn(title, ax):
+        error_divergence_plot(
+            scores,
+            horizon_length,
+            title=title,
+            xlabel="Prediction Horizon [messages]",
+            ylabel="L1 score",
+            ax=ax,
+        )
+    return _div_plot_fn
