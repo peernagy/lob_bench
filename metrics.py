@@ -18,30 +18,34 @@ from scipy.spatial import cKDTree
 
 # TODO: optimise this performance-wise:
 def _bootstrap(
-        score_df: pd.DataFrame,
-        loss_fn: Callable[[pd.DataFrame], float],
-        n_bootstrap: int = 100,
-        ci_alpha: float = 0.01,
-        whole_data_loss: Optional[float] = None,
-        rng_np: np.random.Generator = np.random.default_rng(12345),
-    ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    """
+    score_df: pd.DataFrame,
+    loss_fn: Callable[[pd.DataFrame], float],
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: Optional[float] = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
     if whole_data_loss is not None:
         losses = [whole_data_loss]
     else:
         losses = []
-        
-    for i in range(n_bootstrap):
-        real_idx = score_df.loc[score_df['type'] == 'real'].index
-        n_real = len(real_idx)
-        generated_idx = score_df.loc[score_df['type'] == 'generated'].index
-        n_gen = len(generated_idx)
 
+    # get all real data
+    real_idx = score_df.loc[score_df['type'] == 'real'].index
+    n_real = len(real_idx)
+    real_all = score_df.loc[real_idx]
+    # get all generated data
+    generated_idx = score_df.loc[score_df['type'] == 'generated'].index
+    n_gen = len(generated_idx)
+    gen_all = score_df.loc[generated_idx]
+    # get indices for bootstrap samples
+    real_btstr_idcx = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_btstr_idcx = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+    # create individual samples
+    for i in range(n_bootstrap):
         # draw bootstrap samples
-        real_sample = score_df.loc[real_idx].iloc[rng_np.integers(0, n_real, size=n_real)]
-        gen_sample = score_df.loc[generated_idx].iloc[rng_np.integers(0, n_gen, size=n_gen)]
-        
+        real_sample = real_all.iloc[real_btstr_idcx[i]]
+        gen_sample = gen_all.iloc[gen_btstr_idcx[i]]
         score_df_sampled = pd.concat([real_sample, gen_sample], axis=0)
 
         # losses.append(loss_fn(real_sample.score, gen_sample.score))
@@ -55,28 +59,26 @@ def _bootstrap(
     return ci, losses
 
 def wasserstein(
-        score_df: pd.DataFrame,
-        bootstrap_ci: bool = True,
-        n_bootstrap: int = 100,
-        ci_alpha: float = 0.01,
-        rng_np: np.random.Generator = np.random.default_rng(12345),
-    ):
-    """
-    """
+    score_df: pd.DataFrame,
+    bootstrap_ci: bool = True,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+):
     def _wasserstein(score_df: pd.DataFrame):
         # p, q = flatten(p), flatten(q)
         p = score_df.loc[score_df['type'] == 'real', 'score']
         q = score_df.loc[score_df['type'] == 'generated', 'score']
         return stats.wasserstein_distance(p, q)
-    
+
     if ('generated' not in score_df['type'].values) or ('real' not in score_df['type'].values):
         if bootstrap_ci:
             return np.nan, np.ones(2) * np.nan, np.ones(n_bootstrap+1) * np.nan
         return np.nan
-    
+
     score_df = score_df.copy()
     score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
-    
+
     w = _wasserstein(score_df)
 
     if bootstrap_ci:
@@ -86,15 +88,17 @@ def wasserstein(
         return w
 
 def l1_by_group(
-        score_df: pd.DataFrame,
-        bootstrap_ci: bool = True,
-        n_bootstrap: int = 100,
-        ci_alpha: float = 0.01,
-        rng_np: np.random.Generator = np.random.default_rng(12345),
-    ) -> float | tuple[float, np.ndarray, np.ndarray]:
+    score_df: pd.DataFrame,
+    bootstrap_ci: bool = True,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> float | tuple[float, np.ndarray, np.ndarray]:
     """
-    Takes a "score dataframe" with columns "score" (real numbers), "group" (+int), "type" ("real" or "generated")
-    Returns the mean L1 distance between the number of scores in each group for the real and generated data.
+    Takes a "score dataframe" with columns "score" (real numbers),
+    "group" (+int), "type" ("real" or "generated")
+    Returns the mean L1 distance between the number of scores in
+    each group for the real and generated data.
     """
     def _calc_l1(score_df: pd.DataFrame):
         group_counts = score_df.groupby(['type', 'group']).count()
@@ -114,7 +118,7 @@ def l1_by_group(
         return 1.
 
     l1 = _calc_l1(score_df)
-    
+
     if bootstrap_ci:
         l1_ci, l1s = _bootstrap(score_df, _calc_l1, n_bootstrap, ci_alpha, l1, rng_np)
         return l1, l1_ci, l1s
@@ -124,7 +128,7 @@ def l1_by_group(
 
 def ob3Drepr(orderbook, row_index):
     '''
-    Input is the orderbook, for example, `b_real`, `b_gene`, and the corresponding `row_index`. 
+    Input is the orderbook, for example, `b_real`, `b_gene`, and the corresponding `row_index`.
     Output is the 3D reconstruction of the row in the orderbook corresponding to `row_index`.
     delta_mid_price: delta mid-price
     index:           relative price level where change occurs,
@@ -167,7 +171,7 @@ def kl_divergence_kde(a, b):
     N = a.shape[0]
     M = b.shape[0]
     K = a.shape[1]
-    assert a.shape[1] == b.shape[1]    
+    assert a.shape[1] == b.shape[1]
 
     # Fit KDE models with adjusted bandwidth
     kde_a = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(a)
@@ -208,18 +212,18 @@ def kl_divergence_kde(a, b):
 def kl_divergence_PerezCruz(P, Q, eps=1e-11):
     '''
     Only work for one dimensional, e.g. P(N*1) and Q(M*1) as input
-    
+
     Kullback-Leibler divergence estimation of continuous distributions
     Published in IEEE International Symposium… 6 July 2008 Mathematics
-    F. Pérez-Cruz, Pedro E. Harunari, Ariel Yssou 
-    
-    Codes based on Section II of Fernando Pérez-Cruz's paper 
-    "Kullback-Leibler Divergence Estimation of Continuous Distributions". 
-    From two independent datasets of continuous variables, 
-    the KLD (aka relative entropy) is estimated by the construction of 
+    F. Pérez-Cruz, Pedro E. Harunari, Ariel Yssou
+
+    Codes based on Section II of Fernando Pérez-Cruz's paper
+    "Kullback-Leibler Divergence Estimation of Continuous Distributions".
+    From two independent datasets of continuous variables,
+    the KLD (aka relative entropy) is estimated by the construction of
     cumulative probability distributions and the comparison between their slopes at specific points.
     Estimating the probability distributions and directly evaluating KLD's definition
-    leads to a biased estimation, whereas the present method leads to an unbiased estimation. 
+    leads to a biased estimation, whereas the present method leads to an unbiased estimation.
     This is particularly important in practical applications due to the finitude of collected statistics.
 
     Func takes two datasets to estimate the relative entropy between their PDFs
@@ -229,7 +233,7 @@ def kl_divergence_PerezCruz(P, Q, eps=1e-11):
         '''Returns the step function value at each increment of the CDF'''
         sorted_arr = np.array(sorted(arr))
         counts = np.zeros(len(arr))
-        
+
         rolling_count = 0
         for idx, elem in enumerate(sorted_arr):
             rolling_count += 1
@@ -241,26 +245,26 @@ def kl_divergence_PerezCruz(P, Q, eps=1e-11):
         return (sorted_arr, counts)
     P = sorted(P)
     Q = sorted(Q)
-    
+
     P_positions, P_counts = cumcount_reduced(P)
     Q_positions, Q_counts = cumcount_reduced(Q)
-    
+
     #definition of x_0 and x_{n+1}
     x_0 = np.min([P_positions[0], Q_positions[0]]) - 1
     P_positions = np.insert(P_positions, 0, [x_0])
     P_counts = np.insert(P_counts, 0, [0])
     Q_positions = np.insert(Q_positions, 0, [x_0])
     Q_counts = np.insert(Q_counts, 0, [0])
-    
+
     x_np1 = np.max([P_positions[-1], Q_positions[-1]]) + 1
     P_positions = np.append(P_positions, [x_np1])
     P_counts = np.append(P_counts, [1])
     Q_positions = np.append(Q_positions, [x_np1])
     Q_counts = np.append(Q_counts, [1])
-    
+
     f_P = interp1d(P_positions, P_counts)
-    f_Q = interp1d(Q_positions, Q_counts) 
-    
+    f_Q = interp1d(Q_positions, Q_counts)
+
     X = P_positions[1:-2]
     values = (f_P(X) - f_P(X - eps)) / (f_Q(X) - f_Q(X - eps))
     filt = ((values != 0.) & ~(np.isinf(values)) & ~(np.isnan(values)))
@@ -315,6 +319,3 @@ if __name__=="__main__":
     b = np.random.rand(M, K)
     kl_divergence_kde(a, b)
     kl_divergence_PerezCruz(a, b)
-    
-
-

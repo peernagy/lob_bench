@@ -193,7 +193,7 @@ def run_benchmark(
             args.save_dir
             + f"/scores_uncond_{args.stock}_{args.model_name}_{time_str}.pkl"
         )
-        print("...done")
+        print("... done")
 
     if (not args.uncond_only) and (not args.div_only):
         print("[*] Running conditional scoring")
@@ -229,7 +229,23 @@ def run_benchmark(
             + f"{args.divergence_horizon}_{time_str}.pkl"
         )
 
+    if args.div_error_bounds:
+        print("[*] Calculating divergence lower bounds...")
+        baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+            score_dfs_,
+            metrics.l1_by_group
+        )
+        print("[*] Saving baseline errors...")
+        save_results(
+            baseline_errors_by_score,
+            None,
+            args.save_dir
+            + f"/scores_div_{args.stock}_REAL_"
+            + f"{args.divergence_horizon}_{time_str}.pkl"
+        )
+
     print("[*] Done")
+
 
 
 if __name__ == "__main__":
@@ -241,10 +257,14 @@ if __name__ == "__main__":
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
     parser.add_argument("--div_only", action="store_true")
+    parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     args = parser.parse_args()
 
     assert not (args.uncond_only and args.cond_only), \
         "Cannot specify both uncond_only and cond_only as args"
+
+    assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
+        "Cannot calculate divergence error bounds without running divergence scoring"
 
     run_benchmark(args)

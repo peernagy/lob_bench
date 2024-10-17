@@ -36,13 +36,13 @@ def get_kwargs(score_config, conditional=False):
 
 
 def score_data(
-        loader: data_loading.Simple_Loader,
-        scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        *,
-        group_scores: bool = True,
-        return_plot_fn=False,
-        **kwargs,
-    ):
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    *,
+    group_scores: bool = True,
+    return_plot_fn=False,
+    **kwargs,
+):
     """
     """
     scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn)
@@ -74,14 +74,14 @@ def score_data(
 
 
 def score_data_cond(
-        loader: data_loading.Simple_Loader,
-        scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        scoring_fn_cond: Callable[[pd.DataFrame, pd.DataFrame], float],
-        *,
-        return_plot_fn: bool = False,
-        score_kwargs: dict = {},
-        score_cond_kwargs: dict = {},
-    ):
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    scoring_fn_cond: Callable[[pd.DataFrame, pd.DataFrame], float],
+    *,
+    return_plot_fn: bool = False,
+    score_kwargs: dict = {},
+    score_cond_kwargs: dict = {},
+):
     """
     Grouping is done based on the scoring_fn_cond
     and scores are based on the scoring_fn.
@@ -142,12 +142,12 @@ def score_data_cond(
 
 
 def score_prediction_horizons(
-        loader: data_loading.Simple_Loader,
-        scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        horizon_length: int,
-        group_scores: bool = True,
-        **kwargs
-    ):
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    horizon_length: int,
+    group_scores: bool = True,
+    **kwargs
+):
     """
     Computes a table unconditional scores of all real data with
     """
@@ -194,19 +194,17 @@ def score_prediction_horizons(
 
 
 def compute_metrics(
-        loader: data_loading.Simple_Loader,
-        scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        # metric_fn: Callable[[pd.DataFrame], float] | \
-        #            Iterable[Callable[[pd.DataFrame], float]],
-        metric_fn: dict[str, Callable[[pd.DataFrame], float]],
-        scoring_fn_cond: Optional[
-                         Callable[[pd.DataFrame, pd.DataFrame], float]
-                        ] = None,
-        score_kwargs: dict = {},
-        score_cond_kwargs: dict = {},
-    ) -> tuple[float, pd.DataFrame, Callable]:
-    """
-    """
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    # metric_fn: Callable[[pd.DataFrame], float] | \
+    #            Iterable[Callable[[pd.DataFrame], float]],
+    metric_fn: dict[str, Callable[[pd.DataFrame], float]],
+    scoring_fn_cond: Optional[
+                        Callable[[pd.DataFrame, pd.DataFrame], float]
+                    ] = None,
+    score_kwargs: dict = {},
+    score_cond_kwargs: dict = {},
+) -> tuple[float, pd.DataFrame, Callable]:
     # unconditional scoring
     if scoring_fn_cond is None:
         score_df, plot_fn = score_data(
@@ -265,6 +263,33 @@ def compute_metrics(
     return metric, score_df, plot_fn
 
 
+def _replace_gen_with_real_scores(horizon_df):
+    df_real1 = horizon_df[horizon_df["type"] == 'real'].copy()
+    df_real2 = df_real1.copy()
+    # pretend real data is generated to calculate baseline divergence
+    df_real2['type'] = 'generated'
+    df_ = pd.concat([df_real1, df_real2])
+    return df_
+
+
+def calc_baseline_errors_by_score(
+    scoring_dfs_horizon_all_scores: dict[str, list[pd.DataFrame]],
+    metric_fn: Callable[[pd.DataFrame], float],
+) -> dict[str, list[float]]:
+    baseline_errors_by_score = {
+        score_name: [
+            # TODO: generalize this to other metrics
+            metric_fn(
+                _replace_gen_with_real_scores(df),
+                # we want one-sided: 0.99
+                # --> upper limit of the two-sided intervals for 0.98
+                ci_alpha=0.98
+            ) for df in scoring_dfs_horizon
+        ] for score_name, scoring_dfs_horizon in scoring_dfs_horizon_all_scores.items()
+    }
+    return baseline_errors_by_score
+
+
 def compute_divergence_metrics(
         loader: data_loading.Simple_Loader,
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -284,6 +309,7 @@ def compute_divergence_metrics(
     )
     # L1 scores for each horizon distribution
     loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
+
     plot_fn = lambda title, ax: plotting.error_divergence_plot(
         loss_horizons,
         horizon_length,
@@ -296,18 +322,16 @@ def compute_divergence_metrics(
 
 
 def run_benchmark(
-        loader: data_loading.Simple_Loader,
-        scoring_config_dict: dict,
-        default_metric: Callable[[pd.DataFrame], float],
-        divergence: bool = False,
-        divergence_horizon: int = 50,
-    ) -> tuple[
-        dict[str, float],
-        dict[str, pd.DataFrame],
-        dict[str, Callable]
-    ]:
-    """
-    """
+    loader: data_loading.Simple_Loader,
+    scoring_config_dict: dict,
+    default_metric: Callable[[pd.DataFrame], float],
+    divergence: bool = False,
+    divergence_horizon: int = 50,
+) -> tuple[
+    dict[str, float],
+    dict[str, pd.DataFrame],
+    dict[str, Callable]
+]:
 
     scores = {}
     score_dfs = {}
@@ -355,6 +379,7 @@ def run_benchmark(
 
     return scores, score_dfs, plot_fns
 
+
 def summary_stats(
         scores,
         bootstrap: bool = True,
@@ -375,8 +400,11 @@ def summary_stats(
 
         if bootstrap:
             # draw single score from each bootstrap sample per metric
-            losses_bootstrap = np.array(
-                [[rng_np.choice(s[metric_name][2]) for s in scores.values()] for _ in range(n_bootstrap)])
+            losses_bootstrap = np.array([
+                [rng_np.choice(s[metric_name][2])
+                    for s in scores.values()]
+                for _ in range(n_bootstrap)
+            ])
             # print(losses_bootstrap)
             bs_mean, bs_median, bs_iqm = _calc_summary_stats(losses_bootstrap)
             q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
@@ -385,7 +413,11 @@ def summary_stats(
             ci_iqm = np.percentile(bs_iqm, q)
 
             # return (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
-            return_dict[metric_name] = (aggr_mean, ci_mean), (aggr_median, ci_median), (aggr_iqm, ci_iqm)
+            return_dict[metric_name] = (
+                (aggr_mean, ci_mean),
+                (aggr_median, ci_median),
+                (aggr_iqm, ci_iqm),
+            )
         # return aggr_mean, aggr_median, aggr_iqm
         else:
             return_dict[metric_name] = aggr_mean, aggr_median, aggr_iqm

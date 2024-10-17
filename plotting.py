@@ -1,6 +1,7 @@
-from typing import Callable, Optional, Any
+from typing import Callable, Iterable, Optional, Any
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
@@ -25,7 +26,6 @@ def hist(
     data = pd.concat([real, gen], axis=0)
     data.columns = ['x', 'type']
     # display(data)
-    print("plotting.py: n_Bins to use in histogram",len(bins))
     sns.histplot(
         data, x='x', hue='type', #kde=True,
         alpha=0.5, stat='density', multiple='layer', line_kws={'linewidth': 2},
@@ -39,8 +39,6 @@ def hist(
     # sns.histplot(gen, color='red', alpha=0.5, label='Generated', ax=plt.gca())
     # plt.legend()
     _finish_plot(title, xlabel, ylabel, ax)
-    # if not isinstance(bins, str):
-    #     print(f'bins: {bins}')
 
 
 def facet_grid_hist(
@@ -51,12 +49,61 @@ def facet_grid_hist(
     filter_groups_below_weight: Optional[float] = None,
     bins = 'auto',
     binwidth: Optional[float] = None,
-):
+    stock: str = "",
+    model: str = "",
+) -> None:
     score_df = score_df.copy()
     # add group weight to filter on
     score_df['weight'] = score_df.groupby('group').transform('count')['score'] / len(score_df)
     if filter_groups_below_weight is not None:
         score_df = score_df[score_df['weight'] >= filter_groups_below_weight]
+
+    if (binwidth is None) and (bins == 'auto'):
+        xmin = score_df.score.min()
+        xmax = score_df.score.max()
+        score_range = xmax - xmin
+        unique_vals = np.sort(score_df.score.unique())
+        n_unique = len(unique_vals)
+        if n_unique < 30:
+            min_diff = pd.Series(unique_vals).diff().min()
+            binwidth = min_diff if min_diff > 0 else 1
+            # bins = score_range / binwidth
+            bins = np.arange(xmin, xmax+binwidth, binwidth)
+        else:
+            # apply FD rule by group and take mean FD rule over all groups
+            binwidth = np.nanmean(
+                score_df.groupby('group').apply(
+                    lambda x: 2 * (x.score.quantile(0.75) - x.score.quantile(0.25)) / len(x) ** (1/3)
+                ).values,
+                dtype=np.float32
+            )
+            if binwidth == 0:
+                n_bins = int(np.ceil(np.sqrt(score_df.groupby('group')['score'].count().mean())))
+                binwidth = score_range / n_bins
+            else:
+                n_bins = np.ceil(score_range / binwidth).astype(int)
+            bins = np.arange(xmin, xmax+binwidth, binwidth)
+
+        if binwidth > score_range:
+            binwidth = score_range
+            bins = np.array([xmin, xmax+binwidth])
+        if (
+            np.isnan(binwidth)
+            or np.isinf(binwidth)
+            or binwidth == 0
+            or n_unique < 2
+        ):
+            if n_unique < 30:
+                binwidth = (xmax - xmin) / n_unique
+                bins = np.arange(xmin, xmax+binwidth, binwidth)
+            else:
+                binwidth = None
+                bins = 'auto'
+        # if n_unique < 30:
+        #     # binwidth = np.ceil(min_diff).astype(int)
+        #     bins = n_unique
+        #     binwidth = (score_df.score.max() - score_df.score.min()) / n_unique
+        #     # bins = np.ceil(n_bins).astype(int)
 
     g = sns.FacetGrid(
         score_df, row="group",
@@ -64,29 +111,101 @@ def facet_grid_hist(
         aspect=4, height=1
     )
 
+    groups_to_drop = set()
+    # remove outliers at .. x IQR or std from the mean
+    # out_multiple = 4
     for i, (group, ax) in enumerate(g.axes_dict.items()):
         df_ = score_df.loc[score_df["group"] == group]
         # weight = len(df_) / len(score_df)
         weight = df_.weight.iloc[0]
-        print('weigth:', weight)
+
+        title = f'{var_cond} $ \\in$ [{df_.score_cond.min():.2e}, {df_.score_cond.max():.2e}] (w={weight:.2f})'
+        ax.set_title(title)
+
+        std = df_.score.std()
+        iqr = df_.score.quantile(0.75) - df_.score.quantile(0.25)
+        out_measure = iqr if iqr > 0 else std
+        median = np.median(df_.score)
+        # df_ = df_[
+        #     (df_.score > median - out_multiple*out_measure)
+        #     & (df_.score < median + out_multiple*out_measure)
+        # ]
+
+        n_unique_group = len(df_.score.unique())
+        # don't plot empty groups
+        if n_unique_group == 1:
+            val = df_.score.iloc[0]
+            # plot single bars manually for real and gen
+            if "real" in df_.type.values:
+                ax.hist(
+                    val,
+                    bins=[val, val+binwidth],
+                    alpha=0.5,
+                    edgecolor="black",
+                    color="C0",
+                )
+            if "generated" in df_.type.values:
+                ax.hist(
+                    val,
+                    bins=[val, val+binwidth],
+                    alpha=0.5,
+                    edgecolor="black",
+                    color="C1",
+                )
+            ax.set_xlabel(var_eval)
+            ax.set_ylabel("")
+            continue
+        elif n_unique_group == 0:
+            groups_to_drop.add(group)
+            continue
+
         sns.histplot(
             data=df_, x='score', hue='type',
             stat='density', common_bins=True, common_norm=False,
             ax=ax, alpha=0.5, bins=bins,
-            #bins=100,
-            # TODO: for other data
-            binwidth=binwidth
+            # binwidth=binwidth,
+            edgecolor="black",
+            palette={"real": "C0", "generated": "C1"},
         )
-        ax.set_title(
-            f'{var_cond} $ \\in$ [{df_.score_cond.min():.2e}, {df_.score_cond.max():.2e}] (w={weight:.2f})')
-        # remove legend
-        ax.get_legend().remove()
         ax.set_xlabel(var_eval)
         ax.set_ylabel('')
-        # ax.set_xlim((100, 600))  # spread
-        ax.set_xlim((0, 1500))  # total volume
+        ax.get_legend().remove()
 
-    plt.suptitle(f'({var_eval} | {var_cond}) histograms', fontweight='bold')
+    # drop empy plots
+    for group in groups_to_drop:
+        g.axes_dict.pop(group)
+
+    out_multiple = 2.5
+    median, std = np.median(score_df.score), score_df.score.std()
+    iqr = score_df.score.quantile(0.75) - score_df.score.quantile(0.25)
+    xmax = score_df.score.max()
+    if iqr == 0:
+        lo = score_df.score.min()
+        # use 99 quantile for hi
+        hi = score_df.score.quantile(0.99)
+    else:
+        out_measure = iqr
+        lo = np.maximum(median - out_multiple*out_measure, score_df.score.min())
+        hi_outlier = median + out_multiple*out_measure
+        hi_outlier = np.ceil(hi_outlier / binwidth) * binwidth
+        hi_bin_add = binwidth if binwidth is not None else 0
+        hi = np.minimum(hi_outlier, xmax + hi_bin_add)
+    for ax in g.axes.flat:
+        ax.set_xlim((lo, hi))
+
+    suptitle = f'({var_eval} | {var_cond}) histograms ({stock}) [{model}]'
+    plt.suptitle(suptitle, fontweight='bold')
+    plt.legend(
+        [
+            Line2D([0], [0], color='C0', lw=4, alpha=0.5),
+            Line2D([0], [0], color='C1', lw=4, alpha=0.5),
+        ],
+        ["real", "generated"],
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=2,
+        bbox_transform=ax.figure.transFigure,
+    )
     plt.tight_layout()
 
 
@@ -123,10 +242,11 @@ def error_divergence_plot(
     title: str= '',
     xlabel: str= 'Prediction Horizon',
     ylabel: str= 'Error',
+    model_name: Optional[str] = None,
     ax: Optional[plt.Axes] = None,
+    color: Optional[str] = None,
+    baseline_errors: Optional[list[float]] = None,
 ):
-    """
-    """
     labels = [f"{period}-{period+horizon_length}"
         for period in range(
             0,
@@ -140,31 +260,57 @@ def error_divergence_plot(
     sns.lineplot(
         x=labels,
         y=l1s,
-        ax=ax
+        ax=ax,
+        color=color,
+        label=model_name,
     )
+    if baseline_errors is not None:
+        sns.lineplot(
+            x=labels,
+            y=baseline_errors,
+            ax=ax,
+            color='black',
+            label=r'99% CI $\hat{D}[real|real]$',
+            linestyle=':',
+        )
+    plt.legend(model_name, loc="lower right")
     if ax is None:
         ax = plt
     ax.errorbar(
-        x=labels, y=cis.mean(axis=0), yerr=np.diff(cis, axis=0) / 2,
-        fmt='none')
+        x=labels,
+        y=cis.mean(axis=0),
+        yerr=np.diff(cis, axis=0) / 2,
+        fmt='none',
+        color=color,
+    )
     ax.tick_params(axis='both', which='major', labelsize=14)
     _finish_plot(title, xlabel, ylabel, ax)
 
 
 def hist_subplots(
     plot_fns: dict[str, Callable[[str, plt.Axes], None]],
+    axs: Optional[Iterable[plt.Axes]] = None,
     figsize: Optional[tuple[int, int]] = None,
     suptile: Optional[str] = None,
     save_path: Optional[str] = None,
-):
+    plot_legend: bool = True,
+) -> Iterable[plt.Axes]:
     """
     """
-    fig, axs = plt.subplots(np.ceil(len(plot_fns) / 2).astype(int), 2, figsize=figsize)
+    if axs is None:
+        fig, axs = plt.subplots(np.ceil(len(plot_fns) / 2).astype(int), 2, figsize=figsize)
     axs = axs.reshape(-1)
 
     for i, (name, fn) in enumerate(plot_fns.items()):
         fn(name, axs[i])
         # axs[i].set_xlim(x_ranges[i])
+        if (i == 0) and plot_legend:
+            # move legend location to the right
+            axs[i].legend(
+                loc='upper center',
+                bbox_to_anchor=(0.5, 1.45),
+                ncol=3,
+            )
         if i > 0:
             legend = axs[i].get_legend()
             if legend:
@@ -188,6 +334,7 @@ def hist_subplots(
             save_path,
             dpi=300, bbox_inches='tight'
         )
+    return axs
 
 
 def spider_plot(
@@ -290,7 +437,7 @@ def spider_plot(
 
     # fig.write_image(f"images/spiderplt_{stock}_{metric_str}.png")
     if save_path is not None:
-        fig.write_image(save_path)
+        fig.write_image(save_path, scale=3)
     return fig
 
 
@@ -487,7 +634,7 @@ def _finish_plot(
         plt.title(title, fontsize=18)
 
 
-def get_plot_fn(score_df):
+def get_plot_fn_uncond(score_df: pd.DataFrame) -> Callable[[str, plt.Axes], None]:
     unique_scores = score_df.score.unique()
     if unique_scores.shape[0] < 80:
         # discrete = True
@@ -499,7 +646,7 @@ def get_plot_fn(score_df):
         # discrete = False
         binwidth = None
 
-    def _score_hist_plot(name, ax):
+    def _score_hist_plot(name: str, ax: plt.Axes) -> None:
         # mean, std = score_df.score.mean(), score_df.score.std()
         # xmin = max(mean - 3*std, score_df.score.min())
         # xmax = min(mean + 3*std, score_df.score.max())
@@ -521,6 +668,7 @@ def get_plot_fn(score_df):
             ax=ax,
             # discrete=discrete,
             binwidth=binwidth,
+            legend=True,
         )
         ax.set_title(name.capitalize().replace("_", " "), fontsize=18)
         ax.set_xlabel("")
@@ -531,7 +679,34 @@ def get_plot_fn(score_df):
     return _score_hist_plot
 
 
-def get_div_plot_fn(scores, horizon_length=100):
+# def get_plot_fn_cond(
+#     score_df: pd.DataFrame
+# ) -> Callable[[str, str, int, float], None]:
+#     def _plot_fn(
+#         var_eval: str,
+#         var_cond: str,
+#         bins: int,
+#         binwidth: float,
+#     ) -> None:
+#         return facet_grid_hist(
+#             score_df,
+#             var_eval=var_eval,
+#             var_cond=var_cond,
+#             filter_groups_below_weight=0.01,
+#             bins=bins,
+#             binwidth=binwidth,
+#         )
+#   return _plot_fn
+
+
+def get_div_plot_fn(
+    scores: list[tuple[float, np.ndarray]],
+    horizon_length: int,
+    color: str = None,
+    model_name: Optional[str] = None,
+    # FIXME: types
+    baseline_errors: Optional[list[float]] = None,
+) -> Callable[[str, plt.Axes], None]:
     def _div_plot_fn(title, ax):
         error_divergence_plot(
             scores,
@@ -539,6 +714,9 @@ def get_div_plot_fn(scores, horizon_length=100):
             title=title,
             xlabel="Prediction Horizon [messages]",
             ylabel="L1 score",
+            model_name=model_name,
             ax=ax,
+            color=color,
+            baseline_errors=baseline_errors,
         )
     return _div_plot_fn

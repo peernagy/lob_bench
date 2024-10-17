@@ -90,7 +90,7 @@ def get_subseqs(
             # TODO: potential bug: this dimension can be different for different gen seqs
             num_gen_series=(seq.num_gen_series[0], num_subseqs)
         )
-    
+
 def _split_df(
         df: pd.DataFrame,
         subseq_len: int,
@@ -151,7 +151,7 @@ def score_gen(
         seqs: Iterable[data_loading.Lobster_Sequence],
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     ) -> list:
-    """ 
+    """
     """
     return _score_data(seqs, scoring_fn, score_real=False)
 
@@ -185,10 +185,10 @@ def _score_seq(
         if isinstance(messages[0], data_loading.Lazy_Tuple) \
         or isinstance(messages[0], tuple) \
         or isinstance(messages[0], list):
-            
+
             score = tuple(
                 tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(m_subseq, b_subseq)) \
-                for m_subseq, b_subseq in zip(messages, book) 
+                for m_subseq, b_subseq in zip(messages, book)
             )
         else:
             score = tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(messages, book))
@@ -197,34 +197,40 @@ def _score_seq(
     return score
 
 def group_by_score(
-        scores_real: Iterable,
-        scores_gen: Optional[Iterable[Iterable]] = [],
-        *,
-        bin_method: Optional[str] = None,
-        n_bins: Optional[int] = None,
-        quantiles: Optional[list[float]] = None,
-        thresholds: Optional[list[float]] = None,
-        return_thresholds: bool = False,
-        discrete: bool = False,
-    ) -> tuple[list[float], list[float]]:
+    scores_real: Iterable,
+    scores_gen: Optional[Iterable[Iterable]] = None,
+    *,
+    bin_method: Optional[str] = None,
+    n_bins: Optional[int] = None,
+    quantiles: Optional[list[float]] = None,
+    thresholds: Optional[list[float]] = None,
+    return_thresholds: bool = False,
+    discrete: bool = False,
+) -> tuple[list[float], list[float]]:
     """ TODO: think about quantile behaviour when large numbers of discrete values
-              occur, resulting in multiple quantiles to be the same. Currently, 
-              this will put all the data up until the first non-unique threshold
-              in the same group/bin. 
+                occur, resulting in multiple quantiles to be the same. Currently,
+                this will put all the data up until the first non-unique threshold
+                in the same group/bin.
     """
 
-    all_scores = np.concatenate((
-        flatten(scores_real),
-        flatten(scores_gen)
-    ), casting='safe').astype(float)
-    
+    if scores_gen is None:
+        scores_gen = []
+
+    all_scores = np.concatenate(
+        (
+            flatten(scores_real),
+            flatten(scores_gen)
+        ),
+        casting='safe'
+    ).astype(float)
+
     min_score, max_score = all_scores.min(), all_scores.max()
     if discrete:
         thresholds = np.unique(all_scores)
     else:
         if bin_method is not None:
             # ignore nan scores
-            all_scores = all_scores[(~np.isnan(all_scores)) & (~np.isinf(all_scores))]            
+            all_scores = all_scores[(~np.isnan(all_scores)) & (~np.isinf(all_scores))]
             thresholds = np.histogram_bin_edges(all_scores, bins=bin_method)
         elif n_bins is not None:
             # thresholds = np.linspace(min_score, max_score, n_bins+1)
@@ -241,7 +247,7 @@ def group_by_score(
             pass
         else:
             raise ValueError("Must provide either bin_method, n_bins, quantiles, or thresholds.")
-    
+
     # single (real) sequence
     if (len(scores_real) == 0) or (not hasattr(scores_real[0], '__iter__')):
         # groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
@@ -263,7 +269,7 @@ def group_by_score(
             tuple(np.searchsorted(thresholds, sg_subseq, side='right') for sg_subseq in sg_i)
             for sg_i in scores_gen
         ]
-    
+
     if return_thresholds:
         thresholds = np.concatenate([[min_score], thresholds, [max_score]])
         return groups_real, groups_gen, thresholds
@@ -324,7 +330,7 @@ def get_score_table(
         # groups_gen_flat = flatten(groups_gen)
         # assert len(scores_gen_flat) == len(groups_gen_flat), f"Length mismatch: {len(scores_gen_flat)} != {len(groups_gen_flat)}"
         # gen_data = [(sg, g, 'generated') for sg, g in zip(scores_gen_flat, groups_gen_flat)]
-        
+
         if hasattr(scores_gen[0][0], '__iter__'):
             gen_data = [
                 (sg, g, 'generated') \
