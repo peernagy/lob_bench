@@ -139,6 +139,7 @@ class Lobster_Sequence():
     def __init__(
             self,
             date: str,
+            real_id: int,
             m_real: callable,
             b_real: callable,
             num_gen_series: tuple[int],
@@ -157,6 +158,7 @@ class Lobster_Sequence():
         ) -> None:
 
         self.date = date
+        self.real_id=real_id
 
         if callable(m_real):
             self._m_real = m_real
@@ -345,7 +347,7 @@ class Simple_Loader():
 
             date_str = rmp.split('/')[-1].split('_')[1]
 
-            self.paths.append((date_str, rmp, rbp, gen_messsage_paths, gen_book_paths, cond_message_path, cond_book_path))
+            self.paths.append((date_str, real_id,rmp, rbp, gen_messsage_paths, gen_book_paths, cond_message_path, cond_book_path))
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -357,7 +359,7 @@ class Simple_Loader():
             The generated book files are optional and will be calculated from messages using JaxLob simulator if not provided.
         """
 
-        date, rmp, rbp, gmp, gbp, cmp, cbp = self.paths[i]
+        date, real_id ,rmp, rbp, gmp, gbp, cmp, cbp = self.paths[i]
 
         def m_real():
             m = load_message_df(rmp)
@@ -379,7 +381,8 @@ class Simple_Loader():
         def m_cond():
             if cmp is not None:
                 m = load_message_df(cmp)
-                m = add_date_to_time(m, date)
+                if not m.empty:
+                    m = add_date_to_time(m, date)
                 return m
             else:
                 return None
@@ -392,6 +395,7 @@ class Simple_Loader():
 
         s = Lobster_Sequence(
             date,
+            real_id,
             m_real,
             b_real,
             num_gen_series=(len(gmp),),

@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 import data_loading
 import pickle
 from collections import Counter
+from pathlib import Path
 
 from collections import namedtuple
 ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
@@ -67,8 +68,10 @@ def _filter_sequence_for_impact(message_sequence : pd.DataFrame,
     filtered_books=book_sequence.loc[sequence_indices]
     return filtered_messages,filtered_books
 
-def _filter_touch_events(m_df,b_df):
-    indeces=(~b_df[[0, 1, 2,3]].diff().eq(0).all(axis=1) & m_df['event_type'].isin([1,2,3,4]))
+def _filter_touch_events(m_df,b_df, realid=0,date=''):
+    indeces=(~b_df[[0, 1, 2,3]].eq(0).any(axis=1) & ~b_df[[0, 1, 2,3]].diff().eq(0).all(axis=1) & m_df['event_type'].isin([1,2,3,4]) & m_df['direction'].isin([-1,1]))
+    # if not indeces.any():
+    #     print(f"For this sequence {date}_{realid}, there are no valid touch events")
     m_df=m_df.loc[indeces]
     b_df=b_df.loc[indeces]
     #FIXME: Should really ensure that the market orders within a ms are collapsed into one. pg.1400 of paper.
@@ -204,18 +207,18 @@ def _apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
     metrics_real=[]
     metrics_gen=[]
     for i in range(0,min(max_seq,len(loader))):
-        real_df=_classify_event_types(
-                        #merge_MOs(
-                        _filter_touch_events(loader[i].m_real,loader[i].b_real))#)
-        metr=fun(*args,real_df)
-        metrics_real.append(metr)
+        filtered_df=_filter_touch_events(loader[i].m_real,loader[i].b_real,loader[i].real_id,loader[i].date)
+        if not filtered_df.empty:
+            real_df=_classify_event_types(filtered_df)
+            metr=fun(*args,real_df)
+            metrics_real.append(metr)
 
         for j,mgen in enumerate(loader[i].m_gen):
-            gen_df=_classify_event_types(
-                        #merge_MOs(
-                        _filter_touch_events(mgen,loader[i].b_gen[j]))#)
-            metr=fun(*args,gen_df)
-            metrics_gen.append(metr)
+            filtered_df=_filter_touch_events(mgen,loader[i].b_gen[j],loader[i].real_id,loader[i].date)
+            if not filtered_df.empty:
+                gen_df=_classify_event_types(filtered_df)
+                metr=fun(*args,gen_df)
+                metrics_gen.append(metr)
     metrics_real=pd.concat(metrics_real,axis=0)
     metrics_gen=pd.concat(metrics_gen,axis=0)
     results=[]
@@ -331,13 +334,19 @@ def _get_m_p_merged(mb_df: pd.DataFrame,ticksize:int =100):
     delta_mid=mid_final-mid_init
     return delta_mid/ticksize,p
 
-def impact_compare(loader:Simple_Loader,ticker:str="BLANK",model="BLANK",ticksize=100):
+def impact_compare(loader:Simple_Loader,
+                   ticker:str="BLANK",
+                   model="BLANK",
+                   ticksize=100,
+                   save_dir='./'):
     x=(10** np.arange(0.3,2.4,step=0.1)).astype(int)
     events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
     ys_real=[]
     ys_gen=[]
     confidence_ints_real=[]
     confidence_ints_gen=[]
+    diff={}
+
     for event in events:
         print("Calculating for event type: ", event)
         r,g=zip(*[_apply_to_Sequences(_response_func,0.99,1000,(event,i,ticksize),loader) for i in x])
@@ -348,33 +357,19 @@ def impact_compare(loader:Simple_Loader,ticker:str="BLANK",model="BLANK",ticksiz
         confidence_ints_gen.append(g_ci)
         confidence_ints_real.append(r_ci)
 
-    np.savez("ys_real_"+ticker,*ys_real)
-    np.savez("ys_gen_"+ticker,*ys_gen)
-    np.save("x_vals_"+ticker,x)
+        # Calculate sum of abs differences. 
+        delta=np.sum(np.abs(np.array(r_m)-np.array(g_m)))
+        diff[event]=delta
+    abs_diffs=np.array(list(diff.values()))
 
-
-    with open('cis_real'+ticker+'_'+model+'.pickle', 'wb') as f:
-        pickle.dump(confidence_ints_real,f)
-    with open('cis_gen'+ticker+'_'+model+'.pickle', 'wb') as f:
-        pickle.dump(confidence_ints_gen,f)
-    
-    plot_linlog_subplots(x,[ys_real,ys_gen],[confidence_ints_real,confidence_ints_gen],
-                     legend=events,
-                     suptitle="Tick-normalised microscopic response functions for stock ticker: "+ticker,
-                     titles=["Real Data Sequences","Generated Data Sequences"],
-                     ylabel="Rπ (ticks)",
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+    save_tuple=(x,ys_real,ys_gen,confidence_ints_real,confidence_ints_gen,abs_diffs)
+    save_impact_data(save_tuple,
+                     save_dir=save_dir,
                      ticker=ticker,
                      model=model)
 
-
-    diff={}
-    for i,event in enumerate(events):
-        delta=np.sum(np.abs(ys_real[i]-ys_gen[i]))
-        print("Sum of abs differences for ",event," events:",delta)
-        diff[event]=delta
-    abs_diffs=np.array(list(diff.values()))
-    np.save("comparison_graph_"+ticker+"_"+model,abs_diffs,)
-    return np.mean(abs_diffs)
+    return {"Mean_Diffs":np.mean(abs_diffs),"Saved_Tuple":save_tuple}
 
 def impact_analyse(m_seqs,b_seqs):
     mb_seqs=[_filter_touch_events(m,b) for m,b in zip(m_seqs,b_seqs)]
@@ -398,7 +393,21 @@ def impact_analyse(m_seqs,b_seqs):
             ylabel="P_response")
 
 
+def save_impact_data(save_tuple, 
+                    save_dir=".",
+                    ticker="STOCK",
+                    model="MODEL"):
+    save_string=f"/impact_for_{ticker}_{model}.pickle"
+    with open(save_dir+save_string, 'wb') as f:
+        pickle.dump(save_tuple,f)
 
+def load_impact_data(save_dir=".",
+                    ticker="STOCK",
+                    model="MODEL"):
+    save_string=f"/impact_for_{ticker}_{model}.pickle"
+    with open(save_dir+save_string, 'rb') as f:
+        save_tuple=pickle.load(f)
+    return save_tuple
 
 
 #PLotting utilities
@@ -448,7 +457,14 @@ def plot_linlog(x,ys,errs,legend,colors=['b','r','g','c','m','y'],title="Title",
     ax.set_ylabel(ylabel)
     ax.set_ylim(np.array(ys_lims)*1.2)
 
-def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,titles=["Title"],loglog=None,ylabel="y_axis_replace",ticker:str="BLANK",model:str="BLANK"):
+
+def plot_linlog_subplots(x,ys,errs,
+                         legend,colors=['r','g','b'],
+                         suptitle=None,titles=["Title"],
+                         loglog=None,ylabel="y_axis_replace",
+                         ticker:str="BLANK",model:str="BLANK",
+                         save_dir='./'):
+    assert len(ys)==len(errs)
     fig,axarr = plt.subplots(1,len(ys),sharey=True)
     plt.subplots_adjust(wspace=0.05)
     fig.set_figwidth(12)
@@ -459,6 +475,7 @@ def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,tit
             c=colors[math.floor(i/2)]
             m=markers[i%2]
             #ax.scatter(x,y,marker='x',color=colors[i])
+            print(x,y)
             ax.plot(x, y,'--',color=c,lw=0.4,marker=m,)
             ax.fill_between(x,np.array(errs[a][i])[:,0],np.array(errs[a][i])[:,1],alpha=0.1,label='_nolegend_',color=c)
             ys_lims=(min(ys_lims[0],np.min(y)),max(ys_lims[1],np.max(y)))
@@ -468,13 +485,17 @@ def plot_linlog_subplots(x,ys,errs,legend,colors=['r','g','b'],suptitle=None,tit
             ax.loglog(x,np.power(x,-loglog),color='k')
         ax.set_xscale('log')
         ax.legend(legend)
-        ax.set_title(titles[a])
-        ax.set_xlabel("Events lag (l)")
-    axarr[0].set_ylabel(ylabel)
+        ax.set_title(titles[a],fontsize=16)
+        ax.set_xlabel("Events lag (l)",fontsize=14)
+    axarr[0].set_ylabel(ylabel,fontsize=14)
     for a in axarr:
         ax.set_ylim(np.array(ys_lims)*1.2)
-    fig.suptitle(suptitle)
-    fig.savefig('compare_'+ticker+'_'+model+'.png', dpi=fig.dpi)
+        # ax.tick_params(axis='x', labelsize=14)  # X tick labels font size
+        # ax.tick_params(axis='y', labelsize=14)  # Y tick labels font size
+
+
+    fig.suptitle(suptitle,fontsize=16,fontweight='bold')
+    fig.savefig(save_dir+'/impact_compare_'+ticker+'.png', dpi=fig.dpi)
 
  
 #USe the below for macro impact generative loop. 
@@ -516,16 +537,62 @@ def get_cleanup_message(
 
 
 if __name__ == '__main__':
-    for root_path in ["/data1/sascha/data/GOOG/","/data1/sascha/data/INTC/"]:
-        print("Loading data from "+root_path)
-        ticker=str.split(root_path,"/")[-2]
-        
-        loader = data_loading.Simple_Loader(
-                real_data_path= root_path+"data_real",
-                gen_data_path= root_path+"data_gen",
-                cond_data_path=root_path+"data_cond",
-        )
-        res=impact_compare(loader,ticker=ticker,ticksize=100)
-        #df=macro_impact_data(10,100,loader)
-        #print(df)
-        print("Sum of differences of response function: ",res)
+    to_run=[#("/data1/sascha/data/GOOG/benchmark_data/evalsequences/coletta/GOOGep39","GOOG","Coletta"),
+             ("/data1/sascha/data/GOOG/benchmark_data/evalsequences/cont/GOOG", "GOOG", "Baseline"),
+             ("/data1/sascha/data/GOOG/benchmark_data/evalsequences/s5/GOOG_s5","GOOG", "S5")]
+    #         # End of GOOG , now do INTC
+            # ("/data1/sascha/data/INTC/benchmark_data/evalsequences/cont/INTC", "INTC", "Baseline"),
+            # ("/data1/sascha/data/INTC/benchmark_data/evalsequences/S5_old", "INTC", "S5"),]
+            #("/data1/sascha/data/INTC/benchmark_data/evalsequences/coletta/Coletta_Nov", "INTC", "Coletta"),]
+    calculate=False
+    plot=False
+    print_abs_diffs=True
+    # to_run=[("/data1/sascha/data/GOOG/benchmark_data/evalsequences/s5/GOOG_s5_small","GOOG","S5")]
+
+    if calculate:
+        for root_path,ticker,model in to_run:
+            print(f"Loading data from {root_path}")
+            print(f"Evaluating impact for {model} Model for {ticker}")
+
+            loader = data_loading.Simple_Loader(
+                    real_data_path= root_path+"/data_real",
+                    gen_data_path= root_path+"/data_gen",
+                    cond_data_path=root_path+"/data_cond",
+            )
+            res=impact_compare(loader,
+                            ticker=ticker,
+                            save_dir=f'/data1/sascha/data/{ticker}/benchmark_data/benchmark_results/{model}',
+                            model=model)
+            #df=macro_impact_data(10,100,loader)
+            #print(df)
+
+            print("Sum of differences of response function: ",res["Mean_Diffs"])
+    
+
+
+    if plot:
+        paths,tkrs,models=zip(*to_run)
+        for ticker in tkrs:
+            y_list=[]
+            ci_list=[]
+            for i,model in enumerate(models):
+                save_path=f'/data1/sascha/data/{ticker}/benchmark_data/benchmark_results/{model}'
+                (x,ys_real,ys_gen,confidence_ints_real,confidence_ints_gen,abs_diffs)=load_impact_data(save_dir=save_path,
+                                                                                                        ticker=ticker,
+                                                                                                        model=model)
+                if i==0:
+                    y_list.append(ys_real)
+                    ci_list.append(confidence_ints_real)
+                y_list.append(ys_gen)
+                ci_list.append(confidence_ints_gen)
+
+            plot_path="/data1/sascha/lob_bench/plots"
+            plot_linlog_subplots(x,y_list,ci_list,
+                        legend=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'],
+                        suptitle="Tick-normalised microscopic response functions for stock ticker: "+ticker,
+                        titles=["Real Data Sequences"]+[f"Generated from {mod}" for mod in models],
+                        ylabel="Rπ (ticks)",
+                        ticker=ticker,
+                        model=model,
+                        save_dir=plot_path)
+            

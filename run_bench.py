@@ -14,6 +14,8 @@ import eval
 import metrics
 
 
+import time
+
 ###################### UNCONDITIONAL SCORING ########################
 DEFAULT_METRICS = {
     'l1': metrics.l1_by_group,
@@ -168,6 +170,8 @@ def run_benchmark(
     scoring_config_cond: dict[str, Any] = None,
     metric_config: dict[str, Any] = None,
 ) -> None:
+    
+    print("assuming filestruct is data_dir/data_gen... not data_dir/STOCK/data_gen")
 
     if scoring_config is None:
         scoring_config = DEFAULT_SCORING_CONFIG
@@ -176,17 +180,17 @@ def run_benchmark(
     if metric_config is None:
         metric_config = DEFAULT_METRICS
 
-    gen_data_path = args.data_dir + args.stock + "/data_gen"
+    gen_data_path = args.data_dir  + "/data_gen" #+ args.stock
     if args.model_name is not None:
-        # args.model_name = ""
-        gen_data_path += "_" + args.model_name
+        args.model_name = ""
+        gen_data_path += args.model_name
 
     # print("[*] Loading data")
     print(f"[*] Loading data from {gen_data_path}")
     loader = data_loading.Simple_Loader(
-        args.data_dir + args.stock + "/data_real",
+        args.data_dir  + "/data_real", #+ args.stock
         gen_data_path,
-        args.data_dir + args.stock + "/data_cond",
+        args.data_dir  + "/data_cond", #+ args.stock
     )
 
     # materialize all sequences, so we keep them in memory
@@ -282,7 +286,10 @@ if __name__ == "__main__":
     assert not (args.uncond_only and args.cond_only), \
         "Cannot specify both uncond_only and cond_only as args"
 
+    t0=time.time()
     assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
         "Cannot calculate divergence error bounds without running divergence scoring"
 
     run_benchmark(args)
+    t1=time.time()
+    print("Finished Run, time (s) is:", t1-t0)

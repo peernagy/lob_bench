@@ -72,6 +72,7 @@ def _scores_to_df(scores):
 def run_plotting(
     score_dir: str,
     plot_dir: str,
+    model_name: str,
 ) -> None:
     # load all saved stats
     print("[*] Loading data...")
@@ -186,6 +187,8 @@ def run_plotting(
             for model, scores in all_scores_uncond[stock].items()
         } for stock in all_scores_uncond
     }
+    print(summary_stats)
+
     plotting.summary_plot(
         summary_stats,
         save_path=f"{plot_dir}/summary_stats_comp.png"
@@ -219,8 +222,9 @@ if __name__ == "__main__":
     parser.add_argument("--score_dir", type=str, default="data_saved")
     parser.add_argument("--plot_dir", default="images", type=str)
     parser.add_argument("--show_plots", action="store_true")
+    parser.add_argument("--model_name",default="MODEL_NAME",type=str)
     args = parser.parse_args()
 
-    run_plotting(args.score_dir, args.plot_dir)
+    run_plotting(args.score_dir, args.plot_dir+"/"+args.model_name,args.model_name)
     if args.show_plots:
         plt.show()
