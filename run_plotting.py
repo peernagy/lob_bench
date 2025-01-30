@@ -117,6 +117,8 @@ def run_plotting(
                     baseline_errors=baseline_errors_by_score.get(score_name, None)
                 )
                 for score_name, score_ in score_model.items()
+                    # skip OFI scores (averaged over 100 messages)
+                    if not score_name.startswith("ofi")
             }
             # only save once when the last model is plotted
             if i_model == len(score_stock) - 1:

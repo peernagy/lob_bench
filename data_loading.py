@@ -63,18 +63,42 @@ def load_message_df(m_f: str, parse_time: bool = True) -> pd.DataFrame:
         names=cols,
         usecols=cols,
         index_col=False,
+        on_bad_lines='skip',
         dtype={
             'time': str,
-            'event_type': 'int32',
-            'order_id': 'int32',
-            'size': 'int32',
-            'price': 'int32',
-            'direction': 'int32'
+            # 'event_type': 'int32',
+            # 'order_id': 'int32',
+            # 'size': 'int32',
+            # 'price': 'int32',
+            # 'direction': 'int32'
         }
     )
+    # convert columns data types
+    for col in ['event_type', 'order_id', 'size', 'price', 'direction']:
+        messages[col] = pd.to_numeric(messages[col], errors='coerce', downcast='integer')
+        # drop nan values produced by coercion
+        messages = messages.dropna(how='any', subset=col)
+        # try again to parse to int
+        messages[col] = messages[col].astype('int32')
+
+    # messages["event_type"] = pd.to_numeric(messages["event_type"], errors='coerce', downcast='integer')
+    # messages["order_id"] = pd.to_numeric(messages["order_id"], errors='coerce', downcast='integer')
+    # messages["size"] = pd.to_numeric(messages["size"], errors='coerce', downcast='integer')
+    # messages["price"] = pd.to_numeric(messages["price"], errors='coerce', downcast='integer')
+    # messages["direction"] = pd.to_numeric(messages["direction"], errors='coerce', downcast='integer')
+    # messages = messages.dropna()
+
     if parse_time:
         try:
-            messages.time = messages.time.apply(lambda x: Decimal(re.sub('[^0-9,.]', '', x)))
+            messages.time = messages.time.apply(
+                lambda x: Decimal(
+                    re.sub(
+                        r"(\.)(?=.*\.)", # remove multiple decimal points
+                        '',
+                        re.sub('[^0-9,.]', '', x)  # remove all non-numeric characters except commas and periods
+                    )
+                )
+            )
         except decimal.InvalidOperation as e:
             print("error with file ", m_f)
             print("can't convert times to decimal")
