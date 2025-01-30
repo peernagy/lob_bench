@@ -25,4 +25,4 @@ comparison*
 __pycache__/*
 x_vals*
 ys*
-
+/plots/*
