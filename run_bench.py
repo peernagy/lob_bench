@@ -93,6 +93,23 @@ DEFAULT_SCORING_CONFIG = {
         "fn": lambda m, b: eval.cancel_order_levels(m, b)[1].values,
         "discrete": True,
     },
+
+    # TRADES
+    "vol_per_min": {
+        "fn": lambda m, b: eval.volume_per_minute(m, b).values,
+    },
+    "ofi": {
+        "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    },
+    "ofi_up": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 1).values,
+    },
+    "ofi_stay": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 0).values,
+    },
+    "ofi_down": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, -1).values,
+    },
 }
 
 
@@ -164,7 +181,8 @@ def run_benchmark(
         # args.model_name = ""
         gen_data_path += "_" + args.model_name
 
-    print("[*] Loading data")
+    # print("[*] Loading data")
+    print(f"[*] Loading data from {gen_data_path}")
     loader = data_loading.Simple_Loader(
         args.data_dir + args.stock + "/data_real",
         gen_data_path,

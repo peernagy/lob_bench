@@ -200,9 +200,12 @@ def aggregate_params(
 ) -> dict[str, Any]:
     def _weighted_aggr(param_iter, field_name, aggr_params):
         return (
-            jnp.sum(jnp.array([d[field_name] * d["num_events"] for d in param_iter]))
+            jnp.sum(jnp.array([d[field_name] * d["num_events"] for d in param_iter]), axis=0)
             / aggr_params["num_events"]
         )
+
+    # for p in param_iter:
+    #     print("q_i", p["q_i"])
 
     aggr = {
         "total_time": jnp.sum(jnp.array([d["total_time"] for d in param_iter])),
@@ -218,10 +221,17 @@ def aggregate_params(
     aggr["co_size"] = _weighted_aggr(param_iter, "co_size", aggr)
     aggr["mo_count"] = jnp.sum(jnp.array([d["mo_count"] for d in param_iter]))
     aggr["mo_mu"] = aggr["mo_count"] / aggr["total_time"] * aggr["mo_size"] / aggr["lo_size"]
+    # print("mo_count", aggr["mo_count"])
+    # print("total_time", aggr["total_time"])
+    # print("mo_size", aggr["mo_size"])
+    # print("lo_size", aggr["lo_size"])
+    # print("!! mo_mu", aggr["mo_mu"])
     aggr["lo_count"] = jnp.stack([d["lo_count"] for d in param_iter], axis=0).sum(axis=0)
     aggr["co_count"] = jnp.stack([d["co_count"] for d in param_iter], axis=0).sum(axis=0)
     aggr["lo_lambda"] = aggr["lo_count"] / aggr["total_time"]
     aggr["q_i"] = _weighted_aggr(param_iter, "q_i", aggr)
+    # replace 0 q_i with min non-zero value
+    aggr["q_i"] = aggr["q_i"].at[aggr["q_i"] == 0].set(jnp.min(aggr["q_i"][aggr["q_i"] > 0]))
     aggr["co_theta"] = (
         aggr["co_count"] / (aggr["q_i"] * aggr["total_time"])
         * (aggr["co_size"] / aggr["lo_size"])
@@ -230,6 +240,8 @@ def aggregate_params(
     lo_sol = _fit_power_law(aggr["lo_count"] / aggr["total_time"], plot_fit=False)
     aggr["lo_k"] = lo_sol[0]
     aggr["lo_alpha"] = lo_sol[1]
+
+    print("Aggregated params:", aggr)
 
     if save_path is not None:
         print("Saving aggregated params to", save_path)
@@ -322,10 +334,12 @@ def _get_counts_by_side(
 
 if __name__ == "__main__":
     # estimate params for a single file
-    # m_df = data_loading.load_message_df("data/GOOG_2012-06-21_34200000_57600000_message_10.csv")
-    # b_df = data_loading.load_book_df("data/GOOG_2012-06-21_34200000_57600000_orderbook_10.csv")
+    m_df = data_loading.load_message_df("data/GOOG_2012-06-21_34200000_57600000_message_10.csv")
+    b_df = data_loading.load_book_df("data/GOOG_2012-06-21_34200000_57600000_orderbook_10.csv")
     # print(m_df)
-    # estimate_params(b_df, m_df, tick_size=100)
+    estimate_params(b_df, m_df, tick_size=100, num_ticks=500)
+    import sys
+    sys.exit(0)
 
     # estimate on all files in a directory
     # estimate_from_data_files("data/")

@@ -65,46 +65,6 @@ from pandas.tseries.offsets import DateOffset
 import statsmodels.api as sm
 
 
-# def compute_metrics(loader):
-#     """DEPRECATED"""
-#     def _compute_seq_metrics(m, b):
-#         report_interval = '5min'
-
-#         ask_limit_depth, bid_limit_depth = limit_order_depth(m, b)
-#         ask_cancel_depth, bid_cancel_depth = cancellation_depth(m, b)
-#         ask_limit_levels, bid_limit_levels = limit_order_levels(m, b)
-#         ask_cancel_levels, bid_cancel_levels = cancel_order_levels(m, b)
-
-#         metrics = (
-#             mean_per_interval(spread(m, b), report_interval),
-#             mean_per_interval(mid_returns(m, b, '1min'), report_interval),
-
-#             # autocorr(mid_returns(m, b, '1min'), lags=1),
-#             # autocorr(mid_returns(m, b, '1min')**2, lags=10),
-
-#             # time_to_first_fill(m),
-#             # time_to_cancel(m),
-
-#             mean_per_interval(l1_volume(m, b), report_interval),
-#             mean_per_interval(total_volume(m, b, 10), report_interval),
-#             mean_per_interval(ask_limit_depth, report_interval),
-#             mean_per_interval(bid_limit_depth, report_interval),
-#             mean_per_interval(ask_cancel_depth, report_interval),
-#             mean_per_interval(bid_cancel_depth, report_interval),
-#             mean_per_interval(ask_limit_levels, report_interval),
-#             mean_per_interval(bid_limit_levels, report_interval),
-#             mean_per_interval(ask_cancel_levels, report_interval),
-#             mean_per_interval(bid_cancel_levels, report_interval),
-#         )
-#         metrics = pd.concat(metrics, axis=1)
-#         return metrics
-
-#     for m_real, b_real, m_gen, b_gen in loader:
-#         # calculate metrics
-#         real_metrics = _compute_seq_metrics(m_real, b_real)
-#         # TODO: also calculate metrics for generated data and combine data overview
-#         return real_metrics
-
 def mean_per_interval(
         series: pd.Series,
         period: Union[DateOffset, timedelta, str] = '5Min'
@@ -411,11 +371,96 @@ def orderbook_imbalance(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series
     imbalance.index = messages.time
     return imbalance
 
-def orderflow_imbalance(messages: pd.DataFrame) -> pd.Series:
+def volume_per_minute(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
+    """
+    Calculate executed order size per minute by summing volume in
+    1-second intervals and multiplying by 60.
+    This is calculated based on execution messages (event_type == 4),
+    irrespective of changes in the book.
+    Edge periods are dropped if they are shorter than 0.1s,
+    otherwise the volume is scaled proportionally to a full second.
+    """
+
+    min_period_microsec = 100_000
+
+     # Filter for executed orders
+    trades = messages[messages.event_type == 4].copy()
+
+    # Group by 1-second intervals
+    trades['second'] = trades['time'].dt.floor('1s')
+    vol_per_second = trades.groupby('second')['size'].sum().astype(float)
+
+    if not vol_per_second.empty:
+        first, last = vol_per_second.index[0], vol_per_second.index[-1]
+        first_start = trades.loc[trades['second'] == first, 'time'].iloc[0]
+        last_end = trades.loc[trades['second'] == last, 'time'].iloc[-1]
+        # drop period if < 0.1s
+
+        # single second period
+        if len(vol_per_second) == 1:
+            # multiple trades in a single second
+            if first_start != last_end:
+                period = (last_end.microsecond - first_start.microsecond)
+                if period < min_period_microsec:
+                    vol_per_second = vol_per_second.iloc[0:0]
+                else:
+                    vol_per_second.iloc[0] *= 1_000_000 / period
+
+        # multiple second periods
+        else:
+            # first second period is too short
+            if first_start.microsecond < (1_000_000 - min_period_microsec):
+                # drop first period
+                vol_per_second = vol_per_second.iloc[1:]
+            else:
+                vol_per_second.iloc[0] /= 1 - (first_start.microsecond / 1_000_000)
+
+            # last second period is too short
+            if last_end.microsecond < min_period_microsec:
+                # drop last period
+                vol_per_second = vol_per_second.iloc[:-1]
+            else:
+                vol_per_second.iloc[-1] *= 1_000_000 / last_end.microsecond
+
+    # Convert to per-minute volume
+    return vol_per_second.multiply(60)
+
+def orderflow_imbalance(messages: pd.DataFrame, book: pd.DataFrame, n_window=100) -> pd.Series:
     """
     Calculate orderflow imbalance.
     """
-    raise NotImplementedError("Orderflow imbalance not yet implemented.")
+    lvl1 = book.iloc[:, :4]
+    imb = pd.DataFrame(columns=['ask_delta', 'bid_delta', 'imbalance'])
+    imb["ask_delta"] = lvl1.iloc[:, 0].diff().values[1:]
+    imb["bid_delta"] = lvl1.iloc[:, 2].diff().values[1:]
+    # +(p_bid(t) >= p_bid(t-1)) * q_bid(t) - (p_bid(t) <= p_bid(t-1)) * q_bid(t-1)
+    # -(p_ask(t) <= p_ask(t-1)) * q_ask(t) + (p_ask(t) >= p_ask(t-1)) * q_ask(t-1)
+    imb["imbalance"] = (
+        (imb.bid_delta >= 0) * lvl1.values[1:, 3]
+        - (imb.bid_delta <= 0) * lvl1.values[:-1, 3]
+        - (imb.ask_delta <= 0) * lvl1.values[1:, 1]
+        + (imb.ask_delta >= 0) * lvl1.values[:-1, 1]
+    )
+    # rolling average over n_window
+    return imb["imbalance"].rolling(n_window).mean().iloc[n_window-1:]
+
+def orderflow_imbalance_cond_tick(
+    messages: pd.DataFrame,
+    book: pd.DataFrame,
+    tick_sign: int,
+    n_window = 100,
+) -> pd.Series:
+    assert tick_sign in {-1, 0, 1}, "tick_sign must be -1, 0, or 1."
+    # imb length: seq_len - n_window
+    imb = orderflow_imbalance(messages, book, n_window)
+    mid_price_diff = mid_price(messages, book).diff().iloc[1:]
+    df = pd.DataFrame({
+        "imb_prev": imb.values[:-1],
+        "mid_price_diff": mid_price_diff.values[n_window:],
+        # "direction": np.sign(mid_price_diff.values),
+    })
+    df["direction"] = np.sign(df["mid_price_diff"])
+    return df.loc[df["direction"] == tick_sign, "imb_prev"]
 
 def compute_3d_book_changes(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     """

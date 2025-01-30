@@ -56,7 +56,8 @@ def init_params(params_dict: dict[str, Any]) -> CSTParams:
         num_ticks=int(params_dict["num_ticks"]),
         lo_k=int(params_dict["lo_k"]),
         lo_alpha=int(params_dict["lo_alpha"]),
-        mo_mu=int(params_dict["mo_mu"]),
+        # mo_mu=int(params_dict["mo_mu"]),
+        mo_mu=float(params_dict["mo_mu"]),
     )
     return params, params_dict["lo_lambda"], params_dict["co_theta"]
 
@@ -320,12 +321,16 @@ if __name__ == "__main__":
     # with jax.disable_jit():
 
     aggr_params_dict = load_params(
-        "data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10/aggregated_params.pkl"
+        # "data/_data_dwn_32_210__AVXL_2021-01-01_2021-01-31_10/aggregated_params.pkl"
+        # "cst_model/params/model_params_goog.pkl"
+        "cst_model/params/model_params_intc.pkl"
+        # "cst_model/params/GOOG_2023-01-03_params_real_id_8.pkl"
     )
     params, lo_lambda, co_theta = init_params(aggr_params_dict)
     print("model_params", params)
     print("lo_lambda", lo_lambda)
     print("co_theta", co_theta)
+    print()
 
     # plt.plot(jnp.arange(500), lo_lambda)
     # plt.plot(jnp.arange(500), co_theta)

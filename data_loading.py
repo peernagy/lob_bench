@@ -1,4 +1,5 @@
 import pandas as pd
+import decimal
 from decimal import Decimal
 from typing import Optional
 import glob
@@ -6,6 +7,7 @@ from tqdm import tqdm
 from dataclasses import dataclass
 import statsmodels.api as sm
 import warnings
+import re
 
 
 def get_price_range_for_level(
@@ -71,7 +73,14 @@ def load_message_df(m_f: str, parse_time: bool = True) -> pd.DataFrame:
         }
     )
     if parse_time:
-        messages.time = messages.time.apply(lambda x: Decimal(x))
+        try:
+            messages.time = messages.time.apply(lambda x: Decimal(re.sub('[^0-9,.]', '', x)))
+        except decimal.InvalidOperation as e:
+            print("error with file ", m_f)
+            print("can't convert times to decimal")
+            print("times:")
+            print(messages.time)
+            raise e
     return messages
 
 def load_book_df(b_f: str) -> pd.DataFrame:
@@ -280,17 +289,18 @@ class Simple_Loader():
 
         self.paths = []
         for rmp, rbp, in tqdm(zip(real_message_paths, real_book_paths)):
-            _, _, after = rmp.partition('real_id_')
+            before, _, after = rmp.partition('real_id_')
+            date_str = before.split('_')[-3]
             real_id = after.split('_')[0].split('.')[0]
 
-            gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*message*real_id_{real_id}_gen_id_*.csv'))
+            gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*{date_str}*message*real_id_{real_id}_gen_id_*.csv'))
             # warn if no gen data found
             if len(gen_messsage_paths) == 0:
                 warnings.warn(f"No generated message files found for real_id={real_id}")
-            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*orderbook*real_id_{real_id}_gen_id_*.csv'))
+            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*{date_str}*orderbook*real_id_{real_id}_gen_id_*.csv'))
 
-            cond_message_path = sorted(glob.glob(cond_data_path + f'/*message*real_id_{real_id}.csv'))
-            cond_book_path = sorted(glob.glob(cond_data_path + f'/*orderbook*real_id_{real_id}.csv'))
+            cond_message_path = sorted(glob.glob(cond_data_path + f'/*{date_str}*message*real_id_{real_id}.csv'))
+            cond_book_path = sorted(glob.glob(cond_data_path + f'/*{date_str}*orderbook*real_id_{real_id}.csv'))
 
             if len(cond_message_path) == 0:
                 cond_message_path = None

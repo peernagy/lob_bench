@@ -114,7 +114,7 @@ def run_plotting(
                     horizon_length=div_horizon_length,
                     color=f"C{i_model}",
                     model_name=model,
-                    baseline_errors=baseline_errors_by_score[score_name]
+                    baseline_errors=baseline_errors_by_score.get(score_name, None)
                 )
                 for score_name, score_ in score_model.items()
             }
