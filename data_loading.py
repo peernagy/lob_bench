@@ -290,7 +290,7 @@ class Simple_Loader():
         self.paths = []
         for rmp, rbp, in tqdm(zip(real_message_paths, real_book_paths)):
             before, _, after = rmp.partition('real_id_')
-            date_str = before.split('_')[-3]
+            date_str = before.rsplit('/', maxsplit=1)[-1].split('_')[1]
             real_id = after.split('_')[0].split('.')[0]
 
             gen_messsage_paths = sorted(glob.glob(gen_data_path + f'/*{date_str}*message*real_id_{real_id}_gen_id_*.csv'))
