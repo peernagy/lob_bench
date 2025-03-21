@@ -64,6 +64,7 @@ def get_subseqs(
 
         return data_loading.Lobster_Sequence(
             date=seq.date,
+            real_id=0,
             m_real=m_real,
             b_real=b_real,
             m_gen=m_gen,
@@ -79,8 +80,10 @@ def get_subseqs(
         m_gen, b_gen = zip(*(_split_by_time_interval(m, b, time_interval) for m, b in zip(m_gen, b_gen)))
         num_subseqs = len(m_gen[0])
 
+
         return data_loading.Lobster_Sequence(
             date=seq.date,
+            real_id=0,
             m_real=m_real,
             b_real=b_real,
             m_gen=m_gen,

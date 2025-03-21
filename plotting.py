@@ -1,4 +1,4 @@
-from typing import Callable, Iterable, Optional, Any
+from typing import Callable, Iterable, Optional, Any,Union
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
@@ -15,7 +15,7 @@ def hist(
     xlabel: str= '',
     ylabel: str= 'density',
     *,
-    bins: Optional[int|str|list[float]] = 'auto',
+    bins: Optional[Union[int,str,list[float]]] = 'auto',
     binwidth: Optional[float] = None,
     ax: Optional[plt.Axes] = None,
 ):

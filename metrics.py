@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, Optional,Union
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -93,7 +93,7 @@ def l1_by_group(
     n_bootstrap: int = 100,
     ci_alpha: float = 0.01,
     rng_np: np.random.Generator = np.random.default_rng(12345),
-) -> float | tuple[float, np.ndarray, np.ndarray]:
+) -> Union[float , tuple[float, np.ndarray, np.ndarray]]:
     """
     Takes a "score dataframe" with columns "score" (real numbers),
     "group" (+int), "type" ("real" or "generated")

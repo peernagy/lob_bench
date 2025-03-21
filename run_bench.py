@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any,Union
 import numpy as np
 import pandas as pd
 import pathlib
@@ -171,7 +171,11 @@ def run_benchmark(
     metric_config: dict[str, Any] = None,
 ) -> None:
     
-    print("assuming filestruct is data_dir/data_gen... not data_dir/STOCK/data_gen")
+    print("*** \tThe assumed file structure for files in this package is:\n"
+                "***\t \t {DATA_DIR}/{MODEL}/{STOCK}/data_*\n"
+                "***\twhereby DATA_DIR is passed as an argument when launching the script\n"
+                "***\t{MODEL}s and {STOCK}s may either be passed as a str or a list of str\n"
+                "***\tThe script will iterate over all combinations of models and stocks\n")
 
     if scoring_config is None:
         scoring_config = DEFAULT_SCORING_CONFIG
@@ -180,102 +184,104 @@ def run_benchmark(
     if metric_config is None:
         metric_config = DEFAULT_METRICS
 
-    gen_data_path = args.data_dir  + "/data_gen" #+ args.stock
-    if args.model_name is not None:
-        args.model_name = ""
-        gen_data_path += args.model_name
+    if isinstance(args.stock, str):
+        args.stock = [args.stock]
+    if isinstance(args.model_name, str):
+        args.model_name = [args.model_name]
 
-    # print("[*] Loading data")
-    print(f"[*] Loading data from {gen_data_path}")
-    loader = data_loading.Simple_Loader(
-        args.data_dir  + "/data_real", #+ args.stock
-        gen_data_path,
-        args.data_dir  + "/data_cond", #+ args.stock
-    )
+    for stock in args.stock:
+        for model_name in args.model_name:
+            stock_model_path = f"{args.data_dir}/{model_name}/{stock}"
+            print(f"[*] Loading generated data from {stock_model_path}")
+            loader = data_loading.Simple_Loader(
+                stock_model_path  + "/data_real", 
+                stock_model_path  + "/data_gen", 
+                stock_model_path  + "/data_cond", 
+            )
 
-    # materialize all sequences, so we keep them in memory
-    # for multiple accesses
-    for s in loader:
-        s.materialize()
+            # materialize all sequences, so we keep them in memory
+            # for multiple accesses
+            for s in loader:
+                s.materialize()
 
-    time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if (not args.cond_only) and (not args.div_only):
-        print("[*] Running unconditional scoring")
-        scores, score_dfs, plot_fns = scoring.run_benchmark(
-            loader,
-            scoring_config,
-            # default_metric=metrics.l1_by_group
-            # default_metric=metrics.wasserstein
-            default_metric=metric_config
-        )
-        print("[*] Saving results...")
-        save_results(
-            scores,
-            score_dfs,
-            args.save_dir
-            + f"/scores_uncond_{args.stock}_{args.model_name}_{time_str}.pkl"
-        )
-        print("... done")
+            time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if (not args.cond_only) and (not args.div_only):
+                print("[*] Running unconditional scoring")
+                scores, score_dfs, plot_fns = scoring.run_benchmark(
+                    loader,
+                    scoring_config,
+                    # default_metric=metrics.l1_by_group
+                    # default_metric=metrics.wasserstein
+                    default_metric=metric_config
+                )
+                print("[*] Saving results...")
+                save_results(
+                    scores,
+                    score_dfs,
+                    args.save_dir+"/scores"
+                    + f"/scores_uncond_{stock}_{model_name}_{time_str}.pkl"
+                )
+                print("... done")
 
-    if (not args.uncond_only) and (not args.div_only):
-        print("[*] Running conditional scoring")
-        scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
-            loader,
-            scoring_config_cond,
-            # default_metric=metrics.l1_by_group
-            # default_metric=metrics.wasserstein
-            default_metric=metric_config
-        )
-        print("[*] Saving results...")
-        save_results(
-            scores_cond,
-            score_dfs_cond,
-            args.save_dir
-            + f"/scores_cond_{args.stock}_{args.model_name}_{time_str}.pkl"
-        )
-        print("...done")
+            if (not args.uncond_only) and (not args.div_only):
+                print("[*] Running conditional scoring")
+                scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
+                    loader,
+                    scoring_config_cond,
+                    # default_metric=metrics.l1_by_group
+                    # default_metric=metrics.wasserstein
+                    default_metric=metric_config
+                )
+                print("[*] Saving results...")
+                save_results(
+                    scores_cond,
+                    score_dfs_cond,
+                    args.save_dir+"/scores"
+                    + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
+                )
+                print("...done")
 
-    if (not args.cond_only) and (not args.uncond_only):
-        print("[*] Running divergence scoring")
-        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
-            loader, scoring_config, metrics.l1_by_group,
-            divergence_horizon=args.divergence_horizon,
-            divergence=True
-        )
-        print("[*] Saving results...")
-        save_results(
-            scores_,
-            score_dfs_,
-            args.save_dir
-            + f"/scores_div_{args.stock}_{args.model_name}_"
-            + f"{args.divergence_horizon}_{time_str}.pkl"
-        )
+            if (not args.cond_only) and (not args.uncond_only):
+                print("[*] Running divergence scoring")
+                scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+                    loader, scoring_config, metrics.l1_by_group,
+                    divergence_horizon=args.divergence_horizon,
+                    divergence=True
+                )
+                print("[*] Saving results...")
+                save_results(
+                    scores_,
+                    score_dfs_,
+                    args.save_dir+"/scores"
+                    + f"/scores_div_{stock}_{model_name}_"
+                    + f"{args.divergence_horizon}_{time_str}.pkl"
+                )
 
-    if args.div_error_bounds:
-        print("[*] Calculating divergence lower bounds...")
-        baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
-            score_dfs_,
-            metrics.l1_by_group
-        )
-        print("[*] Saving baseline errors...")
-        save_results(
-            baseline_errors_by_score,
-            None,
-            args.save_dir
-            + f"/scores_div_{args.stock}_REAL_"
-            + f"{args.divergence_horizon}_{time_str}.pkl"
-        )
+            if args.div_error_bounds:
+                print("[*] Calculating divergence lower bounds...")
+                baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+                    score_dfs_,
+                    metrics.l1_by_group
+                )
+                print("[*] Saving baseline errors...")
+                save_results(
+                    baseline_errors_by_score,
+                    None,
+                    args.save_dir+"/scores"
+                    + f"/scores_div_{stock}_REAL_"
+                    + f"{args.divergence_horizon}_{time_str}.pkl"
+                )
 
-    print("[*] Done")
+            print("[*] Done")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stock", type=str)
-    parser.add_argument("--data_dir", default="data/", type=str)
-    parser.add_argument("--save_dir", type=str)
-    parser.add_argument("--model_name", type=str)
+    parser.add_argument("--stock", nargs='+', default="GOOG")
+    parser.add_argument("--data_dir", default="./sample_data/data_saved", type=str)
+    parser.add_argument("--save_dir", type=str,default="./results")
+    parser.add_argument("--model_name", nargs='+', default="large_model_sample")
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
     parser.add_argument("--div_only", action="store_true")
@@ -286,10 +292,9 @@ if __name__ == "__main__":
     assert not (args.uncond_only and args.cond_only), \
         "Cannot specify both uncond_only and cond_only as args"
 
-    t0=time.time()
     assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
         "Cannot calculate divergence error bounds without running divergence scoring"
-
+    t0=time.time()
     run_benchmark(args)
     t1=time.time()
     print("Finished Run, time (s) is:", t1-t0)

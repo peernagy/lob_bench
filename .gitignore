@@ -26,3 +26,7 @@ __pycache__/*
 x_vals*
 ys*
 /plots/*
+results/*
+plots/* 
+old_result_files/*
+sample_data/*  

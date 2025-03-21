@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional,Union
 from tqdm import tqdm
 import plotting
 import partitioning
@@ -293,8 +293,8 @@ def calc_baseline_errors_by_score(
 def compute_divergence_metrics(
         loader: data_loading.Simple_Loader,
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        metric_fn: Callable[[pd.DataFrame], float] | \
-                   Iterable[Callable[[pd.DataFrame], float]],
+        metric_fn: Union[Callable[[pd.DataFrame], float] , \
+                   Iterable[Callable[[pd.DataFrame], float]]],
         horizon_length: int,
         **kwargs,
     ):

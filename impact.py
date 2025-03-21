@@ -16,6 +16,9 @@ import data_loading
 import pickle
 from collections import Counter
 from pathlib import Path
+import argparse
+import time
+import os
 
 from collections import namedtuple
 ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
@@ -396,15 +399,17 @@ def impact_analyse(m_seqs,b_seqs):
 def save_impact_data(save_tuple, 
                     save_dir=".",
                     ticker="STOCK",
-                    model="MODEL"):
-    save_string=f"/impact_for_{ticker}_{model}.pickle"
+                    model="MODEL",
+                    macro="micro"):
+    save_string=f"/{macro}_impact_for_{ticker}_{model}.pickle"
     with open(save_dir+save_string, 'wb') as f:
         pickle.dump(save_tuple,f)
 
 def load_impact_data(save_dir=".",
                     ticker="STOCK",
-                    model="MODEL"):
-    save_string=f"/impact_for_{ticker}_{model}.pickle"
+                    model="MODEL",
+                    macro="micro"):
+    save_string=f"/{macro}_impact_for_{ticker}_{model}.pickle"
     with open(save_dir+save_string, 'rb') as f:
         save_tuple=pickle.load(f)
     return save_tuple
@@ -465,7 +470,7 @@ def plot_linlog_subplots(x,ys,errs,
                          ticker:str="BLANK",model:str="BLANK",
                          save_dir='./'):
     assert len(ys)==len(errs)
-    fig,axarr = plt.subplots(1,len(ys),sharey=True)
+    fig,axarr = plt.subplots(1,len(ys),sharey=False)
     plt.subplots_adjust(wspace=0.05)
     fig.set_figwidth(12)
     ys_lims=(-0.1,0.1)
@@ -495,9 +500,49 @@ def plot_linlog_subplots(x,ys,errs,
 
 
     fig.suptitle(suptitle,fontsize=16,fontweight='bold')
-    fig.savefig(save_dir+'/impact_compare_'+ticker+'.png', dpi=fig.dpi)
+    fig.savefig(save_dir+'/micro_impact_compare_'+ticker+'.png', dpi=fig.dpi)
 
- 
+
+def plot_macro_impact_subplots(p,m,
+                         legend=[],colors=['r','g','b'],
+                         suptitle=None,titles=["Title"],
+                         loglog=None,ylabel="y_axis_replace",
+                         ticker:str="BLANK",model:str="BLANK",
+                         save_dir='./'):
+    assert len(p)==len(m)
+    fig,axarr = plt.subplots(1,len(p),sharey=False)
+    plt.subplots_adjust(wspace=0.05)
+    fig.set_figwidth(12)
+    y_lims=(-100,100)
+    markers=['x','+']
+
+    for a,ax in enumerate(axarr):
+        c='r'
+        mark=markers[a%2]
+        #ax.scatter(x,y,marker='x',color=colors[i])
+        print("p is ",p)
+        print(p[a])
+
+        print("m is ",m)
+        print(m[a])
+        ax.plot(np.abs(np.array(p[a])),np.abs(np.array(m[a])), 'o', c='blue', alpha=0.5, markeredgecolor='none')
+
+        ax.legend(legend)
+        ax.set_title(titles[a],fontsize=16)
+        ax.set_xlabel("Participation of Volume",fontsize=14)
+
+    axarr[0].set_ylabel(ylabel,fontsize=14)
+    for a in axarr:
+        ax.set_ylim(np.array(y_lims)*1.2)
+        # ax.tick_params(axis='x', labelsize=14)  # X tick labels font size
+        # ax.tick_params(axis='y', labelsize=14)  # Y tick labels font size
+
+
+    fig.suptitle(suptitle,fontsize=16,fontweight='bold')
+    fig.savefig(save_dir+'/macro_impact_compare_'+ticker+'.png', dpi=fig.dpi)
+
+
+
 #USe the below for macro impact generative loop. 
 
 
@@ -535,64 +580,139 @@ def get_cleanup_message(
     pass
 
 
+def run_impact(args):
 
-if __name__ == '__main__':
-    to_run=[#("/data1/sascha/data/GOOG/benchmark_data/evalsequences/coletta/GOOGep39","GOOG","Coletta"),
-             ("/data1/sascha/data/GOOG/benchmark_data/evalsequences/cont/GOOG", "GOOG", "Baseline"),
-             ("/data1/sascha/data/GOOG/benchmark_data/evalsequences/s5/GOOG_s5","GOOG", "S5")]
-    #         # End of GOOG , now do INTC
-            # ("/data1/sascha/data/INTC/benchmark_data/evalsequences/cont/INTC", "INTC", "Baseline"),
-            # ("/data1/sascha/data/INTC/benchmark_data/evalsequences/S5_old", "INTC", "S5"),]
-            #("/data1/sascha/data/INTC/benchmark_data/evalsequences/coletta/Coletta_Nov", "INTC", "Coletta"),]
-    calculate=False
-    plot=False
-    print_abs_diffs=True
-    # to_run=[("/data1/sascha/data/GOOG/benchmark_data/evalsequences/s5/GOOG_s5_small","GOOG","S5")]
-
-    if calculate:
-        for root_path,ticker,model in to_run:
-            print(f"Loading data from {root_path}")
-            print(f"Evaluating impact for {model} Model for {ticker}")
-
-            loader = data_loading.Simple_Loader(
-                    real_data_path= root_path+"/data_real",
-                    gen_data_path= root_path+"/data_gen",
-                    cond_data_path=root_path+"/data_cond",
-            )
-            res=impact_compare(loader,
-                            ticker=ticker,
-                            save_dir=f'/data1/sascha/data/{ticker}/benchmark_data/benchmark_results/{model}',
-                            model=model)
-            #df=macro_impact_data(10,100,loader)
-            #print(df)
-
-            print("Sum of differences of response function: ",res["Mean_Diffs"])
+    print("*** \tThe assumed file structure for files in this package is:\n"
+                "***\t \t {DATA_DIR}/{MODEL}/{STOCK}/data_*\n"
+                "***\twhereby DATA_DIR is passed as an argument when launching the script\n"
+                "***\t{MODEL}s and {STOCK}s may either be passed as a str or a list of str\n"
+                "***\tThe script will iterate over all combinations of models and stocks\n")
     
+    if not (args.micro_calculate or args.micro_plot or args.macro_calculate or args.macro_plot):
+        print("You must activate the options micro_calculate, micro_plot, macro_calculate or macro_plot to run these options, by default they are all off.")
+    
+    if isinstance(args.stock, str):
+        args.stock = [args.stock]
+    if isinstance(args.model_name, str):
+        args.model_name = [args.model_name]
 
 
-    if plot:
-        paths,tkrs,models=zip(*to_run)
-        for ticker in tkrs:
+    if args.micro_calculate:
+        for model in args.model_name:
+            for ticker in args.stock:
+                root_path = f"{args.data_dir}/{model}/{ticker}"
+                print(f"Loading data from {root_path}")
+                print(f"Evaluating impact for {model} Model for {ticker}")
+
+                loader = data_loading.Simple_Loader(
+                        real_data_path= root_path+"/data_real",
+                        gen_data_path= root_path+"/data_gen",
+                        cond_data_path=root_path+"/data_cond",
+                )
+                res=impact_compare(loader,
+                                ticker=ticker,
+                                save_dir=args.save_dir+f"/impact/{ticker}/{model}",
+                                model=model)
+                print("Sum of differences of response function: ",res["Mean_Diffs"])
+    if args.micro_plot:
+        for ticker in args.stock:
             y_list=[]
             ci_list=[]
-            for i,model in enumerate(models):
-                save_path=f'/data1/sascha/data/{ticker}/benchmark_data/benchmark_results/{model}'
+            for i,model in enumerate(args.model_name):
+                root_path = f"{args.data_dir}/{model}/{ticker}"
+                print(f"Plotting impact for {model} Model for {ticker}")
+
+                save_path=args.save_dir+f"/impact/{ticker}/{model}"
                 (x,ys_real,ys_gen,confidence_ints_real,confidence_ints_gen,abs_diffs)=load_impact_data(save_dir=save_path,
                                                                                                         ticker=ticker,
                                                                                                         model=model)
+                print(f'The abs diffs are {abs_diffs} for {model} and {ticker}.')
+                print(f'The mean is {np.mean(abs_diffs)}.')
+
                 if i==0:
                     y_list.append(ys_real)
                     ci_list.append(confidence_ints_real)
                 y_list.append(ys_gen)
                 ci_list.append(confidence_ints_gen)
 
-            plot_path="/data1/sascha/lob_bench/plots"
+            plot_path=args.save_dir+"/plots"
+            os.makedirs(plot_path,exist_ok=True)
             plot_linlog_subplots(x,y_list,ci_list,
                         legend=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'],
                         suptitle="Tick-normalised microscopic response functions for stock ticker: "+ticker,
-                        titles=["Real Data Sequences"]+[f"Generated from {mod}" for mod in models],
+                        titles=["Real Data"]+[f"{mod}" for mod in args.model_name],
                         ylabel="Rπ (ticks)",
                         ticker=ticker,
                         model=model,
                         save_dir=plot_path)
             
+    if args.macro_calculate:
+        for model in args.model_name:
+            for ticker in args.stock:
+                root_path = f"{args.data_dir}/{model}/{ticker}"
+                print(f"Loading data from {root_path}")
+                print(f"Evaluating impact for {model} Model for {ticker}")
+
+                loader = data_loading.Simple_Loader(
+                        real_data_path= root_path+"/data_real",
+                        gen_data_path= root_path+"/data_gen",
+                        cond_data_path=root_path+"/data_cond",
+                )
+                res=macro_impact_compare(10000,100,10,loader)
+                print(res)
+                save_path=args.save_dir+f"/impact/{ticker}/{model}"
+                save_impact_data(res,save_dir=save_path,ticker=ticker,model=model,macro="macro")
+                print(f"Saved impact data for {model} and {ticker}.")
+
+    if args.macro_plot:
+        for ticker in args.stock:
+            m_list=[]
+            p_list=[]
+            for i,model in enumerate(args.model_name):
+                root_path = f"{args.data_dir}/{model}/{ticker}"
+                print(f"Plotting impact for {model} Model for {ticker}")
+                save_path=args.save_dir+f"/impact/{ticker}/{model}"
+                res=load_impact_data(save_dir=save_path,
+                                    ticker=ticker,
+                                    model=model,macro="macro")
+                (M_i_r,P_i_r,M_i_g,P_i_g)=res
+                print(M_i_r[0].dtype)
+                if i==0:
+                    m_list.append(M_i_r)
+                    p_list.append(P_i_r)
+                m_list.append(M_i_g)
+                p_list.append(P_i_g)
+
+            plot_path=args.save_dir+"/plots"
+            os.makedirs(plot_path,exist_ok=True)
+            print("M_LIST IS",m_list)
+            plot_macro_impact_subplots(p_list,m_list,
+                        legend=[],
+                        suptitle="Macro Impact graphs from (Vyetrenko, 2019) for stock : "+ticker,
+                        titles=["Real Data Sequences"]+[f"{mod}" for mod in args.model_name],
+                        ylabel="Average Midprice move (ticks)",
+                        ticker=ticker,
+                        model=model,
+                        save_dir=plot_path)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stock", nargs='+', default="GOOG")
+    parser.add_argument("--data_dir", default="./sample_data/data_saved", type=str)
+    parser.add_argument("--save_dir", type=str,default="./results")
+    parser.add_argument("--model_name", nargs='+', default="large_model_sample")
+    parser.add_argument("--micro_calculate", action="store_true")
+    parser.add_argument("--micro_plot", action="store_true")
+    parser.add_argument("--macro_calculate", action="store_true")
+    parser.add_argument("--macro_plot", action="store_true",)
+    args = parser.parse_args()
+
+
+    t0=time.time()
+    run_impact(args)
+    t1=time.time()
+    print("Finished Run, time (s) is:", t1-t0)
+
+
+   
