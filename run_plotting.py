@@ -231,7 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--score_dir", type=str, default="./results/scores")
     parser.add_argument("--plot_dir", default="./results/plots", type=str)
     parser.add_argument("--show_plots", action="store_true")
-    parser.add_argument("--model_name",default="MODEL_NAME",type=str)
+    parser.add_argument("--model_name",default="large_model_sample",type=str)
     args = parser.parse_args()
 
     run_plotting(args.score_dir, args.plot_dir,args.model_name)
