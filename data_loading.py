@@ -140,9 +140,9 @@ class Lobster_Sequence():
             self,
             date: str,
             real_id: int,
-            m_real: callable,
-            b_real: callable,
-            num_gen_series: tuple[int],
+            m_real: Optional[callable] = None,
+            b_real: callable = None, # NOTE: b_real is required
+            num_gen_series: tuple[int] = (0,),
             m_gen: Optional[tuple[callable]] = None,
             b_gen: Optional[tuple[callable]] = None,
             m_cond: Optional[tuple[callable]] = None,
@@ -212,6 +212,8 @@ class Lobster_Sequence():
 
     @property
     def m_real(self):
+        if self._m_real is None:
+            return None
         x = self._m_real()
         # if not isinstance(x, tuple):
         #     x = (x,)
@@ -274,6 +276,8 @@ class Lobster_Sequence():
 
     @property
     def m_cond(self):
+        if self._m_cond is None:
+            return None
         return self._m_cond()
 
     @m_cond.setter
@@ -287,6 +291,8 @@ class Lobster_Sequence():
 
     @property
     def b_cond(self):
+        if self._b_cond is None:
+            return None
         return self._b_cond()
 
     @b_cond.setter
@@ -297,7 +303,6 @@ class Lobster_Sequence():
             self._b_cond = value
         else:
             self._b_cond = lambda: value
-
 
 class Simple_Loader():
     def __init__(
@@ -327,7 +332,6 @@ class Simple_Loader():
 
             cond_message_path = sorted(glob.glob(cond_data_path + f'/*{date_str}*message*real_id_{real_id}.csv'))
             cond_book_path = sorted(glob.glob(cond_data_path + f'/*{date_str}*orderbook*real_id_{real_id}.csv'))
-
             if len(cond_message_path) == 0:
                 cond_message_path = None
             elif len(cond_message_path) == 1:
@@ -396,8 +400,8 @@ class Simple_Loader():
         s = Lobster_Sequence(
             date,
             real_id,
-            m_real,
-            b_real,
+            m_real=m_real,
+            b_real=b_real,
             num_gen_series=(len(gmp),),
             m_gen=m_gen,
             b_gen=b_gen,
@@ -407,6 +411,73 @@ class Simple_Loader():
 
         return s
 
+class Simple_Loader_No_Messages():
+    def __init__(
+            self,
+            real_data_path: str,
+            gen_data_path: str,
+            cond_data_path: str
+        ) -> None:
+        # load sample lobster data
+
+        real_book_paths = sorted(glob.glob(real_data_path + '/*orderbook*.csv'))
+        assert real_book_paths is not None, "No real book paths found."
+
+        self.paths = []
+        for rbp in tqdm(real_book_paths):
+            before, _, after = rbp.partition('real_id_')
+            date_str = before.rsplit('/', maxsplit=1)[-1].split('_')[1]
+            real_id = after.split('_')[0].split('.')[0]
+            
+            gen_book_paths = sorted(glob.glob(gen_data_path + f'/*{date_str}*orderbook*real_id_{real_id}_gen_id_*.csv'))
+            cond_book_path = sorted(glob.glob(cond_data_path + f'/*{date_str}*orderbook*real_id_{real_id}.csv'))
+            
+            if len(cond_book_path) == 0:
+                cond_book_path = None
+            elif len(cond_book_path) == 1:
+                cond_book_path = cond_book_path[0]
+            else:
+                print(cond_book_path)
+                raise ValueError(f"Multiple conditional book files found. (real_id={real_id})")
+            
+            date_str = rbp.split('/')[-1].split('_')[1]
+            
+            self.paths.append((date_str, real_id, rbp, gen_book_paths, cond_book_path))
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    # def __getitem__(self, i: int):
+    def __getitem__(self, i: int) -> tuple[pd.DataFrame, pd.DataFrame, tuple[pd.DataFrame], Optional[tuple[pd.DataFrame]]]:
+        """ Get 1 real and N generated dataframes for a given period
+            Returns: real_messages, real_book, tuple(gen_messages), [tuple(gen_books)]
+            The generated book files are optional and will be calculated from messages using JaxLob simulator if not provided.
+        """
+
+        date, real_id, rbp, gbp, cbp = self.paths[i]
+
+        def b_real():
+            return load_book_df(rbp)
+        
+        b_gen = tuple(lambda: load_book_df(b) for b in gbp)
+        
+        def b_cond():
+            if cbp is not None:
+                return load_book_df(cbp)
+            else:
+                return None
+
+
+        s = Lobster_Sequence(
+            date,
+            real_id,
+            b_real=b_real,
+            num_gen_series=(len(gbp),),
+            b_gen=b_gen,
+            b_cond=b_cond,
+        )
+        return s
+    
 
 if __name__=='__main__':
     d = '/homes/80/kang/lob_bench/data_lob_bench/'

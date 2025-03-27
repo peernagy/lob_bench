@@ -66,7 +66,7 @@ import statsmodels.api as sm
 
 
 def mean_per_interval(
-        series: pd.Series,
+        series: pd.Series, 
         period: Union[DateOffset, timedelta, str] = '5Min'
     ):
     """
@@ -83,30 +83,32 @@ def mean_per_interval(
     return means
 
 def mid_price(
-        messages: pd.DataFrame,
+        messages: Optional[pd.DataFrame],
         book: pd.DataFrame
     ) -> pd.Series:
     """
     Calculate mid-price of book.
     """
     mid = (book.iloc[:, 0] + book.iloc[:, 2]) / 2
-    mid.index = messages.time
+    if messages is not None:
+        mid.index = messages.time
     return mid
 
 def spread(
-        messages: pd.DataFrame,
+        messages: Optional[pd.DataFrame],
         book: pd.DataFrame
     ) -> pd.Series:
     """
     Calculate spread of book.
     """
     spread = book.iloc[:, 0] - book.iloc[:, 2]
-    spread.index = messages.time
+    if messages is not None:
+        spread.index = messages.time
     spread.name = 'spread'
     return spread
 
 def mid_returns(
-        messages: pd.DataFrame,
+        messages: Optional[pd.DataFrame],
         book: pd.DataFrame,
         interval: Union[DateOffset, timedelta, str] = '1min'
     ) -> pd.Series:
@@ -115,7 +117,8 @@ def mid_returns(
     NOTE: mid-prices are resampled with the last value of the interval to not look ahead.
     """
     mid = mid_price(messages, book)
-    mid.index = messages.time
+    if messages is not None:
+        mid.index = messages.time
     mid = mid.resample(
         interval, label='right', closed='left', origin='start_day'
     ).last()
@@ -128,7 +131,7 @@ def mid_returns(
     return ret
 
 def volatility(
-        messages: pd.DataFrame,
+        messages: Optional[pd.DataFrame],
         book: pd.DataFrame,
         interval: Union[DateOffset, timedelta, str] = '1min',
     ) -> pd.Series:
@@ -159,6 +162,8 @@ def time_of_day(messages: pd.DataFrame) -> pd.Series:
     """
     Get time of day in seconds.
     """
+    assert messages is not None, "Messages must be provided."
+
     sod = messages.time.iloc[0].replace(hour=0, minute=0, second=0, microsecond=0)
     return (messages.time - sod).dt.total_seconds()
 
@@ -166,12 +171,16 @@ def start_date_time(messages: pd.DataFrame) -> pd.Timestamp:
     """
     Get start time of data.
     """
+    assert messages is not None, "Messages must be provided."
+
     return messages.time.iloc[0]
 
 def start_time(messages: pd.DataFrame) -> pd.Timestamp:
     """
     Get start time of data.
     """
+    assert messages is not None, "Messages must be provided."
+
     dt = start_date_time(messages)
     return (dt - dt.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
 
@@ -179,6 +188,8 @@ def inter_arrival_time(messages: pd.DataFrame) -> pd.Series:
     """
     Calculate inter-arrival time of messages in milliseconds.
     """
+    assert messages is not None, "Messages must be provided."
+
     return messages.time.diff().iloc[1:].dt.total_seconds() * 1000
 
 def time_to_first_fill(messages: pd.DataFrame) -> pd.Series:
@@ -188,6 +199,8 @@ def time_to_first_fill(messages: pd.DataFrame) -> pd.Series:
     CAVE: only orders which are executed are considered. Open orders and cancellations are ignored.
     Hence, the actual time to fill is underestimated.
     """
+    assert messages is not None, "Messages must be provided."
+
     # filter for new orders and executions
     orders = messages[(messages.event_type == 1) | (messages.event_type == 4)]
 
@@ -210,9 +223,11 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
 
     CAVE: only orders which are cancelled are considered. Open orders and executions are ignored.
     """
+    assert messages is not None, "Messages must be provided."
+
     # filter for new orders, cancellations, modifications
     orders = messages[
-        (messages.event_type == 1) |
+        (messages.event_type == 1) | 
         (messages.event_type == 2) |
         (messages.event_type == 3)
     ]
@@ -228,12 +243,9 @@ def time_to_cancel(messages: pd.DataFrame) -> pd.Series:
         include_groups=False
     # get rid of nans from orders that were not cancelled
     ).dropna()
-    # always return a Series with a timedelta type
-    if len(del_t) == 0:
-        return pd.to_timedelta(pd.Series())
     return del_t
 
-def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> pd.Series:
+def total_volume(messages: Optional[pd.DataFrame], book: pd.DataFrame, n_levels: int) -> pd.Series:
     """
     Calculate aggregated bid and ask volume on first n levels of book.
     Returns a single dataframe with summed ask and bid volume of first n_levels,
@@ -242,16 +254,18 @@ def total_volume(messages: pd.DataFrame, book: pd.DataFrame, n_levels: int) -> p
     assert n_levels > 0, "Number of levels must be positive."
     assert n_levels <= book.shape[1] // 4, "Number of levels exceeds book depth."
 
-    ask_vol = book.iloc[:, 1: 4*n_levels: 4].sum(axis=1)
-    bid_vol = book.iloc[:, 3: 4*n_levels: 4].sum(axis=1)
+    ask_vol = book.iloc[:, 1: 2*n_levels: 2].sum(axis=1)
+    bid_vol = book.iloc[:, 0: 2*n_levels: 2].sum(axis=1)
     df = pd.concat([ask_vol, bid_vol], axis=1)
     df.columns = ['ask_vol_' + str(n_levels), 'bid_vol_' + str(n_levels)]
-    df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
-    df.index = messages.time
+    if messages is not None:
+        df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
+        df.index = messages.time
+    else: df["time_weight"] = 1
 
     return df
 
-def l1_volume(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
+def l1_volume(messages: Optional[pd.DataFrame], book: pd.DataFrame) -> pd.Series:
     """
     Calculate ask and bid volume on first level of book.
     Returns a single dataframe with best ask and best bid volume,
@@ -259,8 +273,10 @@ def l1_volume(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     """
     df = book.iloc[:, [1, 3]].copy()
     df.columns = ['ask_vol', 'bid_vol']
-    df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
-    df.index = messages.time
+    if messages is not None:
+        df['time_weight'] = messages.time.diff() / (messages.time.iloc[-1] - messages.time.iloc[0])
+        df.index = messages.time
+    else: df["time_weight"] = 1
     return df
 
 def _order_depth(
@@ -272,6 +288,8 @@ def _order_depth(
     Calculate depth of given order types. Depth is defined as the absolute distance to the mid-price.
     Returns two series: ask and bid depth.
     """
+    assert messages is not None, "Messages must be provided."
+
     order_prices = messages[messages.event_type.isin(event_types)].price
     mid_prices = (book.iloc[:, 0] + book.iloc[:, 2]) / 2
 
@@ -286,6 +304,7 @@ def limit_order_depth(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Se
     Calculate depth (level) of new limit order events.
     Returns ask and bid depth Series.
     """
+    assert messages is not None, "Messages must be provided."
     ask_depth, bid_depth = _order_depth(messages, book, (1,))
     ask_depth.name = 'ask_limit_depth'
     bid_depth.name = 'bid_limit_depth'
@@ -295,6 +314,8 @@ def cancellation_depth(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.S
     """
     Calculate depth of limit order cancellation or modifications.
     """
+    assert messages is not None, "Messages must be provided."
+
     ask_depth, bid_depth =  _order_depth(messages, book, (2, 3))
     ask_depth.name = 'ask_cancel_depth'
     bid_depth.name = 'bid_cancel_depth'
@@ -310,6 +331,8 @@ def _order_levels(
     Get levels of given order types.
     Returns two Series: ask and bid levels.
     """
+    assert messages is not None, "Messages must be provided."
+
     if (2 in event_types) or (3 in event_types):
         assert not 1 in event_types, \
             "Order levels for cancellations and modifications refer to the previous book state and are hence not compatible with new orders."
@@ -340,12 +363,14 @@ def _order_levels(
     ask_levels = ask_levels // 2 + 1
 
     return ask_levels, bid_levels
-
+    
 def limit_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """
     Get levels of new limit orders.
     Returns ask and bid levels Series.
     """
+    assert messages is not None, "Messages must be provided."
+
     ask_levels, bid_levels = _order_levels(messages, book, (1,))
     ask_levels.name = 'ask_limit_level'
     bid_levels.name = 'bid_limit_level'
@@ -356,21 +381,23 @@ def cancel_order_levels(messages: pd.DataFrame, book: pd.DataFrame) -> tuple[pd.
     Get levels of limit order cancellations and modifications.
     Returns ask and bid levels Series.
     """
+    assert messages is not None, "Messages must be provided."
+
     ask_levels, bid_levels = _order_levels(messages, book, (2, 3))
     ask_levels.name = 'ask_cancel_level'
     bid_levels.name = 'bid_cancel_level'
     return ask_levels, bid_levels
 
-def orderbook_imbalance(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
+def orderbook_imbalance(messages: Optional[pd.DataFrame], book: pd.DataFrame) -> pd.Series:
     """
     Calculate orderbook imbalance on the first level of the book (best prices).
     """
     ask_vol = book.iloc[:, 1]
     bid_vol = book.iloc[:, 3]
     imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol)
-    imbalance.index = messages.time
+    if messages is not None:
+        imbalance.index = messages.time
     return imbalance
-
 def volume_per_minute(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     """
     Calculate executed order size per minute by summing volume in
@@ -425,7 +452,7 @@ def volume_per_minute(messages: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
     # Convert to per-minute volume
     return vol_per_second.multiply(60)
 
-def orderflow_imbalance(messages: pd.DataFrame, book: pd.DataFrame, n_window=100) -> pd.Series:
+def orderflow_imbalance(messages: Optional[pd.DataFrame], book: pd.DataFrame, n_window=100) -> pd.Series:
     """
     Calculate orderflow imbalance.
     """
@@ -445,7 +472,7 @@ def orderflow_imbalance(messages: pd.DataFrame, book: pd.DataFrame, n_window=100
     return imb["imbalance"].rolling(n_window).mean().iloc[n_window-1:]
 
 def orderflow_imbalance_cond_tick(
-    messages: pd.DataFrame,
+    messages: Optional[pd.DataFrame],
     book: pd.DataFrame,
     tick_sign: int,
     n_window = 100,

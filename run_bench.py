@@ -42,7 +42,7 @@ DEFAULT_SCORING_CONFIG = {
     "log_time_to_cancel": {
         "fn": lambda m, b: np.log(
             eval.time_to_cancel(m)
-            .dt.total_seconds()
+            .apply(lambda x: x.total_seconds() if pd.notnull(x) else np.nan)
             .replace({0: 1e-9})
             .values.astype(float)
         ),
@@ -147,6 +147,61 @@ DEFAULT_SCORING_CONFIG_COND = {
     }
 }
 
+SCORING_CONFIG_NO_MESSAGES = {
+        "spread": {
+        "fn": lambda m, b: eval.spread(m, b).values,
+        "discrete": True,
+    },
+    "orderbook_imbalance": {
+        "fn": lambda m, b: eval.orderbook_imbalance(m, b).values,
+    },
+
+
+    # VOLUMES:
+    "ask_volume_touch": {
+        "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+    },
+    "bid_volume_touch": {
+        "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    },
+    "ask_volume": {
+        "fn": lambda m, b: eval.total_volume(m, b, 10)
+        .ask_vol_10.values,
+    },
+    "bid_volume": {
+        "fn": lambda m, b: eval.total_volume(m, b, 10)
+        .bid_vol_10.values,
+    },
+
+    # TRADES
+    "ofi": {
+        "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    },
+    "ofi_up": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 1).values,
+    },
+    "ofi_stay": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 0).values,
+    },
+    "ofi_down": {
+        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, -1).values,
+    },
+
+}
+
+######################## CONDITIONAL SCORING ########################
+SCORING_CONFIG_COND_NO_MESSAGES = {
+    "ask_volume | spread": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.spread(m, b).values,
+            "discrete": True,
+        }
+    },
+}
+
 
 def save_results(scores, scores_dfs, save_path, protocol=-1):
     # make sure the folder exists
@@ -193,11 +248,18 @@ def run_benchmark(
         for model_name in args.model_name:
             stock_model_path = f"{args.data_dir}/{model_name}/{stock}"
             print(f"[*] Loading generated data from {stock_model_path}")
-            loader = data_loading.Simple_Loader(
-                stock_model_path  + "/data_real", 
-                stock_model_path  + "/data_gen", 
-                stock_model_path  + "/data_cond", 
-            )
+            if args.no_messages:
+                loader = data_loading.Simple_Loader_No_Messages(
+                    stock_model_path  + "/data_real",
+                    stock_model_path  + "/data_gen",
+                    stock_model_path  + "/data_cond",
+                )
+            else:
+                loader = data_loading.Simple_Loader(
+                    stock_model_path  + "/data_real", 
+                    stock_model_path  + "/data_gen", 
+                    stock_model_path  + "/data_cond", 
+                )
 
             # materialize all sequences, so we keep them in memory
             # for multiple accesses
@@ -287,6 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--div_only", action="store_true")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
+    parser.add_argument("--no_messages", action="store_true")
     args = parser.parse_args()
 
     assert not (args.uncond_only and args.cond_only), \
@@ -295,6 +358,10 @@ if __name__ == "__main__":
     assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
         "Cannot calculate divergence error bounds without running divergence scoring"
     t0=time.time()
-    run_benchmark(args)
+    if not args.no_messages:
+        run_benchmark(args)
+    else:
+        run_benchmark(args, scoring_config=SCORING_CONFIG_NO_MESSAGES, 
+                      scoring_config_cond=SCORING_CONFIG_COND_NO_MESSAGES)
     t1=time.time()
     print("Finished Run, time (s) is:", t1-t0)
