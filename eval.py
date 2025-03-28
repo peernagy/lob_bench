@@ -254,8 +254,8 @@ def total_volume(messages: Optional[pd.DataFrame], book: pd.DataFrame, n_levels:
     assert n_levels > 0, "Number of levels must be positive."
     assert n_levels <= book.shape[1] // 4, "Number of levels exceeds book depth."
 
-    ask_vol = book.iloc[:, 1: 2*n_levels: 2].sum(axis=1)
-    bid_vol = book.iloc[:, 0: 2*n_levels: 2].sum(axis=1)
+    ask_vol = book.iloc[:, 1: 4*n_levels: 4].sum(axis=1)
+    bid_vol = book.iloc[:, 3: 4*n_levels: 4].sum(axis=1)
     df = pd.concat([ask_vol, bid_vol], axis=1)
     df.columns = ['ask_vol_' + str(n_levels), 'bid_vol_' + str(n_levels)]
     if messages is not None:
