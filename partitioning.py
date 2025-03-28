@@ -50,16 +50,21 @@ def get_subseqs(
 
     m_real = seq.m_real
     b_real = seq.b_real
-    m_gen = tuple(seq.m_gen)
+    if seq.m_gen is not None: 
+        m_gen = tuple(seq.m_gen)
+    else: 
+        m_gen = None
     b_gen = seq.b_gen
 
     if num_subseqs is not None:
-        subseq_len = len(m_real) // num_subseqs
+        subseq_len = len(b_real) // num_subseqs
 
     if subseq_len is not None:
-        m_real = _split_df(m_real, subseq_len)
+        if m_real is not None: 
+            m_real = _split_df(m_real, subseq_len)
         b_real = _split_df(b_real, subseq_len)
-        m_gen = tuple(_split_df(m, subseq_len) for m in m_gen)
+        if m_gen is not None: 
+            m_gen = tuple(_split_df(m, subseq_len) for m in m_gen)
         b_gen = tuple(_split_df(b, subseq_len) for b in b_gen)
 
         return data_loading.Lobster_Sequence(
@@ -195,6 +200,16 @@ def _score_seq(
             )
         else:
             score = tuple(scoring_fn(m_real_i, b_real_i) for m_real_i, b_real_i in zip(messages, book))
+    elif messages is None and isinstance(book, data_loading.Lazy_Tuple) or isinstance(book, tuple): 
+        if isinstance(book[0], data_loading.Lazy_Tuple) \
+        or isinstance(book[0], tuple) \
+        or isinstance(book[0], list):
+            score = tuple(
+                tuple(scoring_fn(None, b_real_i) for b_real_i in b_subseq) \
+                for b_subseq in book
+            )
+        else: 
+            score = tuple(scoring_fn(None, b_real_i) for b_real_i in book)
     else:
         score = scoring_fn(messages, book)
     return score
@@ -285,10 +300,10 @@ def group_by_subseq(
     """
     """
     groups_real = [
-        np.arange(len(s.m_real)) for s in subseqs
+        np.arange(len(s.b_real)) for s in subseqs
     ]
     groups_gen = [
-        tuple(np.arange(len(m)) for m in s.m_gen) for s in subseqs
+        tuple(np.arange(len(b)) for b in s.b_gen) for s in subseqs
     ]
     return groups_real, groups_gen
 

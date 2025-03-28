@@ -14,6 +14,7 @@ from run_bench import load_results
 import traceback
 import warnings
 import sys
+import os
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 
@@ -74,6 +75,7 @@ def run_plotting(
     plot_dir: str,
     model_name: str,
 ) -> None:
+    os.makedirs(plot_dir, exist_ok=True)
     # load all saved stats
     print("[*] Loading data...")
     uncond_files = sorted(glob(score_dir + "/scores_uncond_*.pkl"))
