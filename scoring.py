@@ -365,6 +365,7 @@ def run_benchmark(
                     divergence_horizon,
                     **get_kwargs(score_config)
                 )
+            print(score_name, scores[score_name])
 
         else:
             scores[score_name], score_dfs[score_name], plot_fns[score_name] = \

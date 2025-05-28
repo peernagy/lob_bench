@@ -251,6 +251,24 @@ def group_by_score(
         else:
             raise ValueError("Must provide either bin_method, n_bins, quantiles, or thresholds.")
 
+    ###################################################################
+    # TODO: remove! only for robustness test
+    # (1) double bin size / half the thresholds
+    # thresholds = thresholds[1::2]
+
+    # TODO: remove! only for robustness test
+    # (2) half bin size / double the thresholds
+    # thresholds_ = []
+    # thresholds = np.concatenate([[min_score], thresholds, [max_score]])
+    # for i in range(1, thresholds.shape[0]):
+    #     # additional threshold
+    #     new_thresh = thresholds[i-1: i+1].mean()
+    #     thresholds_.append(thresholds[i-1])
+    #     thresholds_.append(new_thresh)
+    # # remove min_score again (max_score is never added)
+    # thresholds = thresholds_[1:]
+    ###################################################################
+
     # single (real) sequence
     if (len(scores_real) == 0) or (not hasattr(scores_real[0], '__iter__')):
         # groups_real = np.searchsorted(thresholds, scores_real, side='right') - 1
