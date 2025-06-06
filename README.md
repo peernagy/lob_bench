@@ -1,78 +1,140 @@
-# lob_bench
-Benchmarking library for generative models of Limit Order Book data (LOBSTER)
+# LOB‑Bench
 
-The benchmarking library consists of two parts.
-I. The evaluation of distributions of 1-Dimensional scores taken from real and generated sequences of data. 
-    a. A measure of dissimilarity between data sets is obtained through the distance between the two distributions: implemented distance metrics are L1 and Wasserstein.
-    b. Currently implemented score functions are:
-        i. Spread - Difference between the best ask and best bid price.
-        ii. Interarrival time - Time between two successeive orders, of any type, in ms. 
-        iii. Orderbook imbalance - Difference in volume available between the best bid and ask prices. 
-        iv. Time to cancel - Time between submission of an order and the first modification/cancellation.
-        v./vi. Volume - Volume on the ask/bid side for the first n levels (Typically 10).
-        vii./viii. Limit order ask/bid depths - Distance of new limit orders from the midprice.
-        ix./x. Limit order ask/bid levels - Level of new limit orders (1 to n, n typically 10).
-        xi./xii. Cancel order ask/bid depths - Distance of cancel orders from the midprice.
-        xiii./xiv. Cancel order ask/bid levels - Level of cancel orders (1 to n, n typically 10).
-    c. Conditional score functions are those which evaluate a distribution given that the value of a conditional score are in some interval. So far, the following are implemented:
-        i. Ask volume (of first level) conditional on the spread.
-        ii. Spread conditional on the time of day (hourly).
-        iii. Spread conditional on the volatility (Stdev of returns over a given time interval)
-II. Consideration of impact response functions 
-    a. The response function is calculated for 6 different event types:
-        i. Market orders which do not change the mid-price: MO_0
-        ii. Market orders which do change the mid-price: MO_1
-        iii. Limit orders which do not change the mid-price: LO_0
-        iv. Limit orders which do change the mid-price: LO_1
-        v. Cancel orders which do not change the mid-price: CA_0
-        vi. Cancel orders which do change the mid-price: CA_1
-    b. Given real and generated data-sequences, the response curves are calculated seperately for each data-set and give a qualititative comparison of how the impact of the event types.
+*Benchmarking generative models for **Limit Order Book** data (LOBSTER format)*
 
-## Benchmarking Quickstart
+---
 
-### Data:
-The input data for the benchmark can be easily loaded by the data loading object: data_loading.Simple_Loader. 
-At initialisation, this object requires three arguments, all of which are file paths:
-    i. the location of the data sequences used for conditioning the model at inference, this is optional
-    ii. the location of the generated data sequences
-    iii. the location of the sequences to which the generated sequences are to be compared. 
+## Table of Contents
+1. [Why LOB‑Bench?](#why)
+2. [Installation](#installation)
+3. [Quick Start](#quickstart)
+4. [Benchmarking Workflow](#workflow)
+    * [Data Loader](#dataloader)
+    * [Score Functions](#scores)
+    * [Distance Metrics](#metrics)
+    * [Impact Response](#impact)
+5. [Extending the Library](#extend)
+6. [Citing](#citing)
+7. [Resources](#resources)
 
-Each of these directories must contain an equal number of comma-separated value files containing the messages and orderbooks for each sequence. These files should have a format identical to that of LOBSTER (https://lobsterdata.com/info/DataStructure.php) data, though this is not a prerequisite for the model to be evaluated. 
+---
 
-### Scores
-Once the loader is configured with the filepaths to data following the above requirements, it becomes very east to use the benchmark. 
+## <a id="why"></a> Why LOB‑Bench?
+*   Quantitatively compares **real** and **generated** LOB sequences.
+*   Provides ready‑made 1‑D score functions and distance metrics (L1, Wasserstein‑1).
+*   Measures *conditional* distributions and *impact response* curves to reveal model drift.
+*   Fully open‑source and easy to extend with custom scores or metrics.
 
-To evaluate the distances between distributions, the score functions that may generate 1-D distributions must be defined. This is done by using a nested Dict of the following form:
+---
 
-{"ScoreName_1" : {"fn" : Callable score_func, "Discrete" : Optional Bool discrete_output }, 
- "ScoreName_2" : ...
- 
- "Cond_ScoreName_1: {"eval" : {"fn" : Callable score_func, "Discrete" : Optional Bool discrete_output },
-                     "cond" : {"fn" : Callable score_func, "Discrete" : Optional Bool discrete_output }},
- "Cond_ScoreName_2: ...
- }
+## <a id="installation"></a> Installation
+```bash
+pip install lob_bench
+```
+Requires Python ≥ 3.9 and the usual scientific‑Python stack (`numpy`, `pandas`, `scipy`, `matplotlib`).
 
- Whereby the conditional score functions require two callable functions to evaluate both the metric and that on which it is conditioned. The pre-implemented score functions can be found in the eval.py file. Any custom function may also be used.
+---
 
- The other required definition dictionary is the distance metrics. Two distances are implemented in the metrics.py file and can be used by defining the metrics dictionary in the form:
+## <a id="quickstart"></a> Quick Start
+```python
+from lob_bench import data_loading, scoring, impact
 
-{"MetricName_1": Callable metric_function,
-  "MetricName_2: ...
+# 1  Load data ──────────────
+loader = data_loading.Simple_Loader(
+    cond_path    = "./data/seed_sequences",   # optional
+    generated_path = "./data/generated_sequences",
+    real_path      = "./data/real_sequences"
+)
+
+# 2  Benchmark distributions ─
+scores = {
+    "Spread"          : {"fn": scoring.spread},
+    "Interarrival"    : {"fn": scoring.interarrival, "Discrete": False},
+    "Imbalance"       : {"fn": scoring.imbalance},
+    # … add or replace as you like
 }
 
- Once these two dictionaries are defined with either the implemented functions, or any custom score/metric function, the benchmarks can be run using the run_benchmark function in the scoring.py file. 
+metrics = {
+    "L1"         : scoring.l1_distance,
+    "Wasserstein": scoring.wasserstein_distance,
+}
 
-The function returns a tuple containing 
-    A. The distances for each metric and score as well as bootstrapped confidence intervals
-    B. The raw score values as well as there bin index for histograms for each entry in the real and generated sequences for each score. 
-    C. Plotting functions for each score to plot the histograms thereof.
+results = scoring.run_benchmark(loader, scores=scores, metrics=metrics)
 
-Examples of these outputs are given in the tutorial notebook. 
+# results is a tuple:
+# A  distances + bootstrap CIs
+# B  raw score values + bin indices
+# C  plotting helpers
 
-### Impact functions
-The impact resonse functions are calculated by simply providing the data loader object to the impact_compare function in the impact.py file.
+# 3  Impact response ─────────
+impact_curves, impact_score = impact.impact_compare(loader)
+```
+See `tutorial.ipynb` for a complete walk‑through.
 
-This filters and labels the data to only consider the events of note, details of which are in the paper. The response functions are then plotted with the 99% confidence interval depicted by the shaded regions. 
+---
 
+## <a id="workflow"></a> Benchmarking Workflow
+### <a id="dataloader"></a> 1. Data Loader
+`Simple_Loader` expects three folders, each containing the **same number** of CSV files in LOBSTER format:
+* **conditioning sequences** (optional)
+* **generated sequences** (model output)
+* **real sequences** (ground truth)
 
+### <a id="scores"></a> 2. Score Functions
+Built‑in (all 1‑D):
+| Category | Name | Description |
+|----------|------|-------------|
+| Price | `Spread` | Best ask − best bid |
+| Time & Flow | `Interarrival` | Time between successive orders (ms) |
+| Volume | `AskVolume` / `BidVolume` | Volume on first *n* levels (default 10) |
+| Imbalance | `OrderbookImbalance` | Volume difference between best bid/ask |
+| Depth | `LimitDepth`, `CancelDepth` | Distance of orders from mid‑price |
+| Level | `LimitLevel`, `CancelLevel` | Price level index (1…n) |
+| Durations | `TimeToCancel` | Submit → first cancel / modify |
 
+Conditional variants are easy—provide nested dicts with `eval` and `cond` keys.
+
+### <a id="metrics"></a> 3. Distance Metrics
+Two metrics ship by default:
+* **L1 (Total Variation)** – bounded in [0, 1].
+* **Wasserstein‑1 (Earth Mover)** – mean‑variance normalised.
+
+Add your own by passing a callable with signature `(real_values, gen_values) -> float`.
+
+### <a id="impact"></a> 4. Impact Response
+`impact_compare(loader)` computes six response curves (MO₀/₁, LO₀/₁, CA₀/₁) following [Eisler *et al.* 2012]. The mean absolute difference across lags gives a single impact score.
+
+---
+
+## <a id="extend"></a> Extending the Library
+1. **Custom score** – create a function `my_score(messages, books) -> ndarray` and add it to the `scores` dict.
+2. **Custom metric** – add a function to the `metrics` dict.
+3. **New loader** – subclass `BaseLoader` for bespoke formats.
+Pull requests are welcome!
+
+---
+
+## <a id="citing"></a> Citing
+If you use LOB‑Bench in academic work, please cite:
+```bibtex
+@misc{nagy2025lobbenchbenchmarkinggenerativeai,
+  title   = {LOB-Bench: Benchmarking Generative AI for Finance -- an Application to Limit Order Book Data},
+  author  = {Peer Nagy and Sascha Frey and Kang Li and Bidipta Sarkar and Svitlana Vyetrenko and Stefan Zohren and Ani Calinescu and Jakob Foerster},
+  year    = {2025},
+  eprint  = {2502.09172},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  url     = {https://arxiv.org/abs/2502.09172}
+}
+```
+
+---
+
+## <a id="resources"></a> Resources
+* 📘 **Paper:** <https://arxiv.org/abs/2502.09172>
+* 🔗 **Project site:** <https://lobbench.github.io/>
+* 🐙 **Source code:** <https://github.com/peernagy/lob_bench>
+
+---
+
+Licensed under **MIT**.
