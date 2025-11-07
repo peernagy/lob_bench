@@ -58,13 +58,21 @@ def facet_grid_hist(
     if filter_groups_below_weight is not None:
         score_df = score_df[score_df['weight'] >= filter_groups_below_weight]
 
-    if (binwidth is None) and (bins == 'auto'):
-        xmin = score_df.score.min()
-        xmax = score_df.score.max()
+    if  (bins == 'auto'):
+        q1, q3 = score_df.score.quantile([0.1, 0.9])
+        iqr = q3 - q1
+        lower_bound = q1 - 2 * iqr
+        upper_bound = q3 + 2 * iqr
+        xmin = max(score_df.score.min(), lower_bound)
+        xmax = min(score_df.score.max(), upper_bound)
         score_range = xmax - xmin
         unique_vals = np.sort(score_df.score.unique())
         n_unique = len(unique_vals)
-        if n_unique < 30:
+        print(f"Determining binwidth for {var_eval} | {var_cond} with {n_unique} unique values over range [{xmin}, {xmax}]")
+        if binwidth is not None:
+            print(f"Using provided binwidth={binwidth}")
+            bins = np.arange(xmin, xmax+binwidth, binwidth)
+        elif n_unique < 30:
             min_diff = pd.Series(unique_vals).diff().min()
             binwidth = min_diff if min_diff > 0 else 1
             # bins = score_range / binwidth
@@ -158,7 +166,9 @@ def facet_grid_hist(
         elif n_unique_group == 0:
             groups_to_drop.add(group)
             continue
+        
 
+        print(f"Plotting histogram with binwidth={binwidth}, n_bins={bins}")
         sns.histplot(
             data=df_, x='score', hue='type',
             stat='density', common_bins=True, common_norm=False,
@@ -167,6 +177,7 @@ def facet_grid_hist(
             edgecolor="black",
             palette={"real": "C0", "generated": "C1"},
         )
+
         ax.set_xlabel(var_eval)
         ax.set_ylabel('')
         ax.get_legend().remove()
@@ -437,7 +448,7 @@ def spider_plot(
 
     # fig.write_image(f"images/spiderplt_{stock}_{metric_str}.png")
     if save_path is not None:
-        fig.write_image(save_path, scale=3)
+        fig.write_image(save_path, scale=3,format='png')
     return fig
 
 
@@ -658,9 +669,13 @@ def get_plot_fn_uncond(score_df: pd.DataFrame) -> Callable[[str, plt.Axes], None
         xmin = max(score_df.score.min(), lower_bound)
         xmax = min(score_df.score.max(), upper_bound)
         if xmin == xmax:
-            xmin, xmax = score_df.score.quantile([0.01, 0.99])
+            xmin, xmax = score_df.score.quantile([0.001, 0.999])
+        print(f"Plotting {name} histogram with binwidth={binwidth}, xmin={xmin}, xmax={xmax}")
+        # score_df['type'] = score_df['type'].map({'real': 0, 'generated': 1})
+        # score_df.astype(np.int64)
+
         sns.histplot(
-            score_df,
+            score_df,#.loc[:,["score","group","type"]],
             x="score",
             hue="type",
             stat="density",
@@ -668,8 +683,10 @@ def get_plot_fn_uncond(score_df: pd.DataFrame) -> Callable[[str, plt.Axes], None
             ax=ax,
             # discrete=discrete,
             binwidth=binwidth,
+            binrange=(xmin,xmax),
             legend=True,
         )
+        print(f"Plotted {name} histogram")
         ax.set_title(name.capitalize().replace("_", " "), fontsize=18)
         ax.set_xlabel("")
         ax.set_xlim(xmin, xmax)

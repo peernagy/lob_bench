@@ -70,6 +70,7 @@ def _scores_to_df(scores):
 
 
 def run_plotting(
+    args,
     score_dir: str,
     plot_dir: str,
     model_name: str,
@@ -89,6 +90,47 @@ def run_plotting(
         all_scores_cond, all_dfs_cond = _load_all_scores(cond_files)
     if len(div_files) > 0:
         all_scores_div, all_dfs_div = _load_all_scores(div_files)
+
+    if len(uncond_files) > 0:
+        # SUMMARY PLOTS
+        print("[*] Plotting summary stats")
+        summary_stats = {
+            stock: {
+                model: scoring.summary_stats(
+                    scores | all_scores_cond.get(stock, {}).get(model, {}),
+                    bootstrap=True
+                )
+                for model, scores in all_scores_uncond[stock].items()
+            } for stock in all_scores_uncond
+        }
+        print(summary_stats)
+
+        plotting.summary_plot(
+            summary_stats,
+            save_path=f"{plot_dir}/summary_stats_comp.png"
+        )
+
+        # COMPARISON PLOTS: bar plots and spider plots
+        print("[*] Plotting comparison plots")
+        # Bar plot of unconditional scores comparing all models
+        data = _scores_to_df(all_scores_uncond)
+        for stock in data.stock.unique():
+            for metric in data.metric.unique():
+                print(f"[*] Plotting {stock} {metric} bar plots")
+                plotting.loss_bars(
+                    data,
+                    stock,
+                    metric,
+                    save_path=f"{plot_dir}/bar_{stock}_{metric}.png"
+                )
+                print(f"[*] Plotting {stock} {metric} spider plots")
+                plotting.spider_plot(
+                    all_scores_uncond[stock],
+                    metric,
+                    title=f"{metric.capitalize()} Loss ({stock})",
+                    plot_cis=False,
+                    save_path=f"{plot_dir}/spider_{stock}_{metric}.png"
+                )
 
     if len(div_files) > 0:
         # divergence plots
@@ -141,7 +183,7 @@ def run_plotting(
 
             plt.close()
 
-    if len(uncond_files) > 0:
+    if len(uncond_files) and args.histograms > 0:
         # UNCONDITIONAL score histograms
         print("[*] Plotting unconditional histograms")
         for stock, score_stock in tqdm(all_dfs_uncond.items(), position=0, desc="Stock"):
@@ -151,6 +193,7 @@ def run_plotting(
                     score_name: plotting.get_plot_fn_uncond(score_df)
                         for score_name, score_df in score_model.items()
                 }
+                print(f"[*] Obtained plot functions for {stock} {model} unconditional histograms")
                 plotting.hist_subplots(
                     plot_fns_uncond,
                     figsize=(10, 22),
@@ -160,20 +203,22 @@ def run_plotting(
                 )
                 plt.close()
     
-    if len(cond_files) > 0:
+    if len(cond_files) & args.histograms > 0:
         # CONDITIONAL score histograms
         print("[*] Plotting conditional histograms")
         for stock, score_stock in tqdm(all_dfs_cond.items(), position=0, desc="Stock"):
             for model, score_model in tqdm(score_stock.items(), position=1, desc="Model", leave=False):
                 for score_name, score_df in score_model.items():
                     var_eval, var_cond = score_name.split(" | ", 1)
+                    print(f"[*] Plotting {stock} {model} cond histograms for {var_eval} | {var_cond}")
+                    binwidth = 100 if var_eval == "spread" else None
                     plotting.facet_grid_hist(
                         score_df,
                         var_eval=var_eval,
                         var_cond=var_cond,
                         filter_groups_below_weight=0.01,
                         bins='auto',
-                        binwidth=None,
+                        binwidth=binwidth,
                         stock=stock,
                         model=model,
                     )
@@ -184,46 +229,8 @@ def run_plotting(
                     plt.close()
 
 
-    if len(uncond_files) > 0:
-        # SUMMARY PLOTS
-        print("[*] Plotting summary stats")
-        summary_stats = {
-            stock: {
-                model: scoring.summary_stats(
-                    scores | all_scores_cond.get(stock, {}).get(model, {}),
-                    bootstrap=True
-                )
-                for model, scores in all_scores_uncond[stock].items()
-            } for stock in all_scores_uncond
-        }
-        print(summary_stats)
-
-        plotting.summary_plot(
-            summary_stats,
-            save_path=f"{plot_dir}/summary_stats_comp.png"
-        )
-
-        # COMPARISON PLOTS: bar plots and spider plots
-        print("[*] Plotting comparison plots")
-        # Bar plot of unconditional scores comparing all models
-        data = _scores_to_df(all_scores_uncond)
-        for stock in data.stock.unique():
-            for metric in data.metric.unique():
-                plotting.loss_bars(
-                    data,
-                    stock,
-                    metric,
-                    save_path=f"{plot_dir}/bar_{stock}_{metric}.png"
-                )
-
-                plotting.spider_plot(
-                    all_scores_uncond[stock],
-                    metric,
-                    title=f"{metric.capitalize()} Loss ({stock})",
-                    plot_cis=False,
-                    save_path=f"{plot_dir}/spider_{stock}_{metric}.png"
-                )
     print("[*] Done")
+
 
 
 if __name__ == "__main__":
@@ -232,8 +239,10 @@ if __name__ == "__main__":
     parser.add_argument("--plot_dir", default="./results/plots", type=str)
     parser.add_argument("--show_plots", action="store_true")
     parser.add_argument("--model_name",default="large_model_sample",type=str)
+    parser.add_argument("--histograms", action="store_true", default=False,
+                        help="Plot histograms of scores")
     args = parser.parse_args()
 
-    run_plotting(args.score_dir, args.plot_dir,args.model_name)
+    run_plotting(args,args.score_dir, args.plot_dir,args.model_name)
     if args.show_plots:
         plt.show()
