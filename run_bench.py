@@ -148,6 +148,20 @@ DEFAULT_SCORING_CONFIG_COND = {
 }
 
 
+######################## CONTEXTUAL SCORING ########################
+DEFAULT_SCORING_CONFIG_CONTEXT = {
+    "ask_volume | spread": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "context": {
+            "fn": lambda m, b: eval.spread(m, b).values,
+            "discrete": True,
+        }
+    },
+}
+
+
 def save_results(scores, scores_dfs, save_path, protocol=-1):
     # make sure the folder exists
     folder_path = save_path.rsplit("/", 1)[0]
@@ -168,6 +182,7 @@ def run_benchmark(
     args: argparse.Namespace,
     scoring_config: dict[str, Any] = None,
     scoring_config_cond: dict[str, Any] = None,
+    scoring_config_context: dict[str, Any] = None,
     metric_config: dict[str, Any] = None,
 ) -> None:
     
@@ -181,6 +196,8 @@ def run_benchmark(
         scoring_config = DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
+    if scoring_config_context is None:
+        scoring_config_context = DEFAULT_SCORING_CONFIG_CONTEXT
     if metric_config is None:
         metric_config = DEFAULT_METRICS
 
@@ -254,6 +271,23 @@ def run_benchmark(
                         )
                         print("...done")
 
+                    if (not args.context_only) and (not args.div_only):
+                        print("[*] Running contextual scoring")
+                        scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
+                            loader,
+                            scoring_config_context,
+                            default_metric=metric_config,
+                            scoring_type="context"
+                        )
+                        print("[*] Saving results...")
+                        save_results(
+                            scores_context,
+                            score_dfs_context,
+                            args.save_dir+"/scores"
+                            + f"/scores_context_{stock}_{model_name}_{time_str}.pkl"
+                        )
+                        print("...done")
+
                     if (not args.cond_only) and (not args.uncond_only):
                         print("[*] Running divergence scoring")
                         scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
@@ -299,6 +333,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", nargs='+', default="s5")
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
+    parser.add_argument("--context_only", action="store_true")
     parser.add_argument("--div_only", action="store_true")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
@@ -306,6 +341,10 @@ if __name__ == "__main__":
 
     assert not (args.uncond_only and args.cond_only), \
         "Cannot specify both uncond_only and cond_only as args"
+    assert not (args.uncond_only and args.context_only), \
+        "Cannot specify both uncond_only and context_only as args"
+    assert not (args.cond_only and args.context_only), \
+        "Cannot specify both cond_only and context_only as args"
 
     assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
         "Cannot calculate divergence error bounds without running divergence scoring"

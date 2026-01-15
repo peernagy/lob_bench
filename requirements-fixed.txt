@@ -1,0 +1,12 @@
+chex==0.1.86
+jax==0.4.35
+jaxlob==0.19
+matplotlib==3.8.0
+numpy==1.26.4
+pandas==2.2.3
+plotly==5.22.0
+scikit_learn==1.3.0
+scipy==1.15.2
+seaborn==0.13.2
+statsmodels==0.14.0
+tqdm==4.66.5

@@ -141,6 +141,98 @@ def score_data_cond(
         return score_df
 
 
+def score_cond_context(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
+    *,
+    return_plot_fn: bool = False,
+    score_kwargs: dict = {},
+    score_context_kwargs: dict = {},
+):
+    """
+    Score eval metric stratified by context bins from conditional data.
+    
+    Bins are computed from scoring_fn_context on the conditional sequences,
+    then eval scores are computed on real/gen at matching indices.
+    
+    This allows evaluating model performance across different market contexts
+    (e.g., different spread regimes) to identify if a model performs better/worse
+    in specific conditions.
+    """
+    scores_real_list = []
+    scores_gen_list = []
+    groups_real_list = []
+    groups_gen_list = []
+    
+    for seq in tqdm(loader.seqs):
+        # Compute context bins from conditional data
+        scores_context = scoring_fn_context(seq.m_cond, seq.b_cond)
+        
+        # Bin context scores
+        groups_context = partitioning.group_by_score(
+            scores_context,
+            **score_context_kwargs
+        )
+        
+        # For each unique bin, score real/gen at those indices
+        for bin_idx in np.unique(groups_context):
+            mask = groups_context == bin_idx
+            indices = np.where(mask)[0]
+            
+            if len(indices) == 0:
+                continue
+            
+            # Extract and score real data
+            m_real_bin = seq.m_real.iloc[indices]
+            b_real_bin = seq.b_real.iloc[indices]
+            
+            score_real = scoring_fn(m_real_bin, b_real_bin)
+            scores_real_list.append(score_real)
+            
+            # Track group assignment
+            num_scores_real = len(score_real) if hasattr(score_real, '__len__') else 1
+            groups_real_list.append(np.full(num_scores_real, bin_idx))
+            
+            # Extract and score generated data
+            if seq.m_gen is not None:
+                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+                    m_gen_bin = m_gen.iloc[indices]
+                    b_gen_bin = b_gen.iloc[indices]
+                    
+                    score_gen = scoring_fn(m_gen_bin, b_gen_bin)
+                    scores_gen_list.append(score_gen)
+                    
+                    num_scores_gen = len(score_gen) if hasattr(score_gen, '__len__') else 1
+                    groups_gen_list.append(np.full(num_scores_gen, bin_idx))
+    
+    # Flatten all scores and groups
+    scores_real_flat = partitioning.flatten(scores_real_list)
+    scores_gen_flat = partitioning.flatten(scores_gen_list) if scores_gen_list else np.array([])
+    groups_real_flat = partitioning.flatten(groups_real_list)
+    groups_gen_flat = [partitioning.flatten(groups_gen_list)] if groups_gen_list else [np.array([])]
+    
+    # Build score table
+    score_df = partitioning.get_score_table(
+        scores_real_flat, 
+        [scores_gen_flat] if len(scores_gen_flat) > 0 else None, 
+        groups_real_flat, 
+        groups_gen_flat if len(scores_gen_flat) > 0 else None
+    )
+    
+    if return_plot_fn:
+        plot_fn = lambda title, ax: plotting.hist(
+            scores_real_flat,
+            [scores_gen_flat] if len(scores_gen_flat) > 0 else [],
+            title=title,
+            xlabel=title,
+            ax=ax,
+        )
+        return score_df, plot_fn
+    else:
+        return score_df
+
+
 def score_prediction_horizons(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -327,6 +419,7 @@ def run_benchmark(
     default_metric: Callable[[pd.DataFrame], float],
     divergence: bool = False,
     divergence_horizon: int = 50,
+    scoring_type: str = "unconditional",
 ) -> tuple[
     dict[str, float],
     dict[str, pd.DataFrame],
@@ -340,6 +433,27 @@ def run_benchmark(
     for score_name, score_config in scoring_config_dict.items():
         print("Calculating scores and metrics for: ", score_name, end="\r\n")
 
+        # contextual scoring
+        if scoring_type == "context" and score_config.get("eval", None) is not None:
+            score_context_config = score_config["context"]
+            score_config_eval = score_config["eval"]
+            score_context_kwargs = get_kwargs(score_context_config, conditional=True)
+            score_kwargs = get_kwargs(score_config_eval, conditional=True)
+            score_fn_context = score_context_config["fn"]
+            
+            score_df = score_cond_context(
+                loader,
+                score_config_eval["fn"],
+                score_fn_context,
+                return_plot_fn=return_plot_fn,
+                score_kwargs=score_kwargs,
+                score_context_kwargs=score_context_kwargs,
+            )
+            score_dfs[score_name] = score_df
+            scores[score_name] = {}
+            plot_fns[score_name] = None
+            continue
+        
         # conditional scoring
         if score_config.get("eval", None) is not None:
             score_cond_config = score_config["cond"]
