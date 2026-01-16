@@ -19,6 +19,7 @@ from pathlib import Path
 import argparse
 import time
 import os
+import tqdm
 
 from collections import namedtuple
 ConfidenceInterval = namedtuple("ConfidenceInterval", ["low", "high"])
@@ -81,6 +82,45 @@ def _filter_touch_events(m_df,b_df, realid=0,date=''):
     big_df=pd.concat([m_df,b_df],axis=1)
     return big_df
 
+def _filter_market_orders(m_df,b_df):
+    indeces=(~b_df[[0, 1, 2,3]].eq(0).any(axis=1) & ~b_df[[0, 1, 2,3]].diff().eq(0).all(axis=1) & m_df['event_type'].isin([4]) & m_df['direction'].isin([-1,1]))
+    m_df=m_df.loc[indeces]
+    b_df=b_df.loc[indeces]
+    big_df=pd.concat([m_df,b_df],axis=1)
+    return big_df
+
+
+def _classify_MO_only(big_df :pd.DataFrame):
+    big_df['askprice_diff']=big_df[0].diff()
+    big_df['bidprice_diff']=big_df[2].diff()
+
+
+    def epsilon_fun(series: pd.Series):
+         if series['event_type']==4:
+             return {'eps':series['direction']*-1,'s':series['direction']*-1}
+         else:
+             raise ValueError("Event type is none of 4. Ensure filtering is done properly beforehand.")
+
+    def classification_fun(series : pd.Series):
+        """Incoming series merged"""
+
+        """
+        MO_0: market order. Type 4 and volume doesn't match entire price level-> prices unchanged
+        MO_1: market order type 4, price is changed
+        """
+        
+        if series['event_type']==4:
+            return "MO"
+        else: 
+            raise ValueError("Event type is none of 4. Ensure filtering is done properly beforehand.")
+            
+    big_df['bouchaud_event']=big_df.apply(classification_fun,axis=1,)
+    eps=big_df.apply(epsilon_fun,axis='columns',result_type='expand')
+    df=pd.concat([big_df,eps],axis='columns')
+    df['midprice']=((df[0]+df[2])/2).astype(int)
+    df=merge_MOs(df)
+    return df
+
 def _classify_event_types(big_df :pd.DataFrame):
     big_df['askprice_diff']=big_df[0].diff()
     big_df['bidprice_diff']=big_df[2].diff()
@@ -130,6 +170,7 @@ def _classify_event_types(big_df :pd.DataFrame):
     eps=big_df.apply(epsilon_fun,axis='columns',result_type='expand')
     df=pd.concat([big_df,eps],axis='columns')
     df['midprice']=((df[0]+df[2])/2).astype(int)
+    df=merge_MOs(df)
     return df
 
 def _sign_autocorr(lag:int,sign:str, sequence:pd.DataFrame):
@@ -191,9 +232,10 @@ def apply_to_seqs(fun,CI,args,sequences:list):
 
 def merge_MOs(test_df:pd.DataFrame):
     gb=test_df.groupby(
-        ((test_df['time'].diff()>datetime.timedelta(milliseconds=1)) |
+        ((test_df['time'].diff()>datetime.timedelta(microseconds=1)) |
         (test_df['event_type']!=4) |
-        (test_df['direction']!=test_df['direction'].shift(1))).cumsum())
+        (test_df['direction']!=test_df['direction'].shift(1)) |
+        (test_df['price']!=test_df['price'].shift(1))).cumsum()) 
     cols=test_df.columns.difference(['size'])
     final=gb.agg({'size': "sum"}).join(gb[cols].last())
     return final
@@ -204,12 +246,25 @@ def matrix_A(sequence):
     """equation 19 from paper"""
     return 0
 
+def score_sequence(m_df: pd.DataFrame,b_df : pd.DataFrame,fun,event:str ="MO",lag:int = 1,ticksize:int=100) -> pd.Series:
+    if event in ["MO"]:
+        filtered_df=_filter_market_orders(m_df,b_df)
+        if not filtered_df.empty:
+            classified_df=_classify_MO_only(filtered_df)
+            metr=fun(event,lag,ticksize,classified_df)
+            return metr
+        else:
+            return pd.Series(dtype=float)
+    else:
+        raise ValueError("Event type not recognised. Currently only MO supported.")
+
+
 
 def _apply_to_Sequences(fun,CI,max_seq,args,loader:Simple_Loader):
     print(args[1],end="\r")
     metrics_real=[]
     metrics_gen=[]
-    for i in range(0,min(max_seq,len(loader))):
+    for i in tqdm.tqdm(range(0,min(max_seq,len(loader))), desc="Processing sequences"):
         filtered_df=_filter_touch_events(loader[i].m_real,loader[i].b_real,loader[i].real_id,loader[i].date)
         if not filtered_df.empty:
             real_df=_classify_event_types(filtered_df)
@@ -342,8 +397,9 @@ def impact_compare(loader:Simple_Loader,
                    model="BLANK",
                    ticksize=100,
                    save_dir='./'):
-    x=(10** np.arange(0.3,2.4,step=0.1)).astype(int)
-    events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] #'MO_0','MO_1'
+    x=(10** np.arange(0.3,2.4,step=0.1)).astype(int) # Lag l values
+    [1]+list(x)
+    events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] # Bouchaud event types from 6 propagator model.
     ys_real=[]
     ys_gen=[]
     confidence_ints_real=[]
@@ -352,7 +408,7 @@ def impact_compare(loader:Simple_Loader,
 
     for event in events:
         print("Calculating for event type: ", event)
-        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,1000,(event,i,ticksize),loader) for i in x])
+        r,g=zip(*[_apply_to_Sequences(_response_func,0.99,8192,(event,i,ticksize),loader) for i in x])
         r_m,r_ci=zip(*r)
         g_m,g_ci=zip(*g)
         ys_real.append(np.array(r_m))
@@ -480,9 +536,9 @@ def plot_linlog_subplots(x,ys,errs,
             c=colors[math.floor(i/2)]
             m=markers[i%2]
             #ax.scatter(x,y,marker='x',color=colors[i])
-            print(x,y)
-            ax.plot(x, y,'--',color=c,lw=0.4,marker=m,)
-            ax.fill_between(x,np.array(errs[a][i])[:,0],np.array(errs[a][i])[:,1],alpha=0.1,label='_nolegend_',color=c)
+            # print(x,y)
+            ax.plot(x[:-2], y[:-2],'--',color=c,lw=0.4,marker=m,)
+            ax.fill_between(x[:-2],np.array(errs[a][i])[:-2,0],np.array(errs[a][i])[:-2,1],alpha=0.1,label='_nolegend_',color=c)
             ys_lims=(min(ys_lims[0],np.min(y)),max(ys_lims[1],np.max(y)))
             
 
@@ -494,9 +550,10 @@ def plot_linlog_subplots(x,ys,errs,
         ax.set_xlabel("Events lag (l)",fontsize=14)
     axarr[0].set_ylabel(ylabel,fontsize=14)
     for a in axarr:
-        ax.set_ylim(np.array(ys_lims)*1.2)
+        a.set_ylim(np.array(ys_lims)*1.2)
         # ax.tick_params(axis='x', labelsize=14)  # X tick labels font size
         # ax.tick_params(axis='y', labelsize=14)  # Y tick labels font size
+
 
 
     fig.suptitle(suptitle,fontsize=16,fontweight='bold')
@@ -595,45 +652,49 @@ def run_impact(args):
         args.stock = [args.stock]
     if isinstance(args.model_name, str):
         args.model_name = [args.model_name]
+    if isinstance(args.period, str):
+        args.period = [args.period]
 
 
     if args.micro_calculate:
         for model in args.model_name:
             for ticker in args.stock:
-                root_path = f"{args.data_dir}/{model}/{ticker}"
-                print(f"Loading data from {root_path}")
-                print(f"Evaluating impact for {model} Model for {ticker}")
+                for p in args.period:
+                    root_path = f"{args.data_dir}/{model}/{ticker}/{p}"
+                    print(f"Loading data from {root_path}")
+                    print(f"Evaluating impact for {model} Model for {ticker}")
 
-                loader = data_loading.Simple_Loader(
-                        real_data_path= root_path+"/data_real",
-                        gen_data_path= root_path+"/data_gen",
-                        cond_data_path=root_path+"/data_cond",
-                )
-                res=impact_compare(loader,
-                                ticker=ticker,
-                                save_dir=args.save_dir+f"/impact/{ticker}/{model}",
-                                model=model)
-                print("Sum of differences of response function: ",res["Mean_Diffs"])
+                    loader = data_loading.Simple_Loader(
+                            real_data_path= root_path+"/data_real",
+                            gen_data_path= root_path+"/data_gen",
+                            cond_data_path=root_path+"/data_cond",
+                    )
+                    res=impact_compare(loader,
+                                    ticker=ticker,
+                                    save_dir=args.save_dir+f"/impact/{ticker}/{model}",
+                                    model=model)
+                    print("Sum of differences of response function: ",res["Mean_Diffs"])
     if args.micro_plot:
         for ticker in args.stock:
             y_list=[]
             ci_list=[]
             for i,model in enumerate(args.model_name):
-                root_path = f"{args.data_dir}/{model}/{ticker}"
-                print(f"Plotting impact for {model} Model for {ticker}")
+                for p in args.period:
+                    root_path = f"{args.data_dir}/{model}/{ticker}/{p}"
+                    print(f"Plotting impact for {model} Model for {ticker}")
 
-                save_path=args.save_dir+f"/impact/{ticker}/{model}"
-                (x,ys_real,ys_gen,confidence_ints_real,confidence_ints_gen,abs_diffs)=load_impact_data(save_dir=save_path,
-                                                                                                        ticker=ticker,
-                                                                                                        model=model)
-                print(f'The abs diffs are {abs_diffs} for {model} and {ticker}.')
-                print(f'The mean is {np.mean(abs_diffs)}.')
+                    save_path=args.save_dir+f"/impact/{ticker}/{model}"
+                    (x,ys_real,ys_gen,confidence_ints_real,confidence_ints_gen,abs_diffs)=load_impact_data(save_dir=save_path,
+                                                                                                            ticker=ticker,
+                                                                                                            model=model)
+                    print(f'The abs diffs are {abs_diffs} for {model} and {ticker}.')
+                    print(f'The mean is {np.mean(abs_diffs)}.')
 
-                if i==0:
-                    y_list.append(ys_real)
-                    ci_list.append(confidence_ints_real)
-                y_list.append(ys_gen)
-                ci_list.append(confidence_ints_gen)
+                    if i==0:
+                        y_list.append(ys_real)
+                        ci_list.append(confidence_ints_real)
+                    y_list.append(ys_gen)
+                    ci_list.append(confidence_ints_gen)
 
             plot_path=args.save_dir+"/plots"
             os.makedirs(plot_path,exist_ok=True)
@@ -699,9 +760,11 @@ def run_impact(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--stock", nargs='+', default="GOOG")
-    parser.add_argument("--data_dir", default="./sample_data/data_saved", type=str)
-    parser.add_argument("--save_dir", type=str,default="./results")
-    parser.add_argument("--model_name", nargs='+', default="large_model_sample")
+    parser.add_argument("--period", nargs='+', default="2023_Jan")
+    parser.add_argument("--data_dir", default="/home/myuser/data/evalsequences", type=str)
+    parser.add_argument("--save_dir", type=str,default="/home/myuser/data/lobbench_scores")
+
+    parser.add_argument("--model_name", nargs='+', default="s5_main")
     parser.add_argument("--micro_calculate", action="store_true")
     parser.add_argument("--micro_plot", action="store_true")
     parser.add_argument("--macro_calculate", action="store_true")
