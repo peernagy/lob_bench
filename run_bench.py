@@ -147,6 +147,36 @@ DEFAULT_SCORING_CONFIG_COND = {
     }
 }
 
+DEFAULT_SCORING_CONFIG_CONDEXT = {
+    "ask_volume | spread": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.spread(m, b).values,
+            "discrete": True,
+        }
+    },
+}
+
+
+DEFAULT_SCORING_CONFIG_CONTEXT = {
+    "ask_volume | spread": {
+        "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        "context_fn": lambda m, b: eval.spread(m, b).values,
+        "context_config": {
+            "discrete": True,
+        }
+    },
+    "bid_volume_touch | spread": {
+        "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+        "context_fn": lambda m, b: eval.spread(m, b).values,
+        "context_config": {
+            "discrete": True,
+        }
+    },
+}
+
 
 def save_results(scores, scores_dfs, save_path, protocol=-1):
     # make sure the folder exists
@@ -168,6 +198,7 @@ def run_benchmark(
     args: argparse.Namespace,
     scoring_config: dict[str, Any] = None,
     scoring_config_cond: dict[str, Any] = None,
+    scoring_config_context: dict[str, Any] = None,
     metric_config: dict[str, Any] = None,
 ) -> None:
     
@@ -181,6 +212,8 @@ def run_benchmark(
         scoring_config = DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
+    if scoring_config_context is None:
+        scoring_config_context = DEFAULT_SCORING_CONFIG_CONTEXT
     if metric_config is None:
         metric_config = DEFAULT_METRICS
 
@@ -218,6 +251,25 @@ def run_benchmark(
                         s.materialize()
 
                     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    # NEW: Contextual Scoring
+                    if True:
+                        print("[*] Running contextual scoring:")
+                        scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
+                            loader,
+                            scoring_config_context,
+                            default_metric=metric_config,
+                            contextual=True
+                        )
+                        print("[*] Saving contextual results...")
+                        save_results(
+                            scores_context,
+                            score_dfs_context,
+                            args.save_dir+"/scores"
+                            + f"/scores_context_{stock}_{model_name}_{time_str}.pkl"
+                        )
+                        print("... done")
+
                     if (not args.cond_only) and (not args.div_only):
                         print("[*] Running unconditional scoring")
                         scores, score_dfs, plot_fns = scoring.run_benchmark(
@@ -292,7 +344,7 @@ def run_benchmark(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--stock", nargs='+', default="GOOG")
-    parser.add_argument("--time_period", nargs='+', default="2023")
+    parser.add_argument("--time_period", nargs='+', default="2023_Jan")
     parser.add_argument("--model_version", nargs='+', default=None)
     parser.add_argument("--data_dir", default="./data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
