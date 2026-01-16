@@ -12,6 +12,7 @@ import data_loading
 import scoring
 import eval
 import metrics
+import impact
 
 
 import time
@@ -21,6 +22,13 @@ DEFAULT_METRICS = {
     'l1': metrics.l1_by_group,
     'wasserstein': metrics.wasserstein,
 }
+
+EXPERIMENTAL_SCORING_CONFIG = {
+    "R_1_MO": {
+        "fn": lambda m, b: impact.score_sequence(m, b,impact._response_func,event="MO",lag=1,ticksize=100).values,
+    }
+}
+
 
 
 DEFAULT_SCORING_CONFIG = {
@@ -178,7 +186,7 @@ def run_benchmark(
                 "***\tThe script will iterate over all combinations of models and stocks\n")
 
     if scoring_config is None:
-        scoring_config = DEFAULT_SCORING_CONFIG
+        scoring_config = EXPERIMENTAL_SCORING_CONFIG #DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
     if metric_config is None:
@@ -291,12 +299,12 @@ def run_benchmark(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stock", nargs='+', default="GOOG")
-    parser.add_argument("--time_period", nargs='+', default="2024")
+    parser.add_argument("--stock", nargs='+', default="AMZN")
+    parser.add_argument("--time_period", nargs='+', default="2024_Dec_END")
     parser.add_argument("--model_version", nargs='+', default=None)
-    parser.add_argument("--data_dir", default="./sample_data/data_saved", type=str)
-    parser.add_argument("--save_dir", type=str,default="./results")
-    parser.add_argument("--model_name", nargs='+', default="s5")
+    parser.add_argument("--data_dir", default="/home/myuser/data/evalsequences", type=str)
+    parser.add_argument("--save_dir", type=str,default="/home/myuser/data/lobbench_scores/test")
+    parser.add_argument("--model_name", nargs='+', default="s5v2")
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
     parser.add_argument("--div_only", action="store_true")

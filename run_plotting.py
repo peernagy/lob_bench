@@ -160,7 +160,7 @@ def run_plotting(
                     score_name: plotting.get_div_plot_fn(
                         score_,
                         horizon_length=div_horizon_length,
-                        color=f"C{i_model}",
+                        color=plotting.ouc.MAIN_COLOUR_CYCLE[i_model],
                         model_name=model,
                         baseline_errors=baseline_errors_by_score.get(score_name, None)
                     )
@@ -200,6 +200,7 @@ def run_plotting(
                     suptile=f"{stock} {model}",
                     save_path=f"{plot_dir}/hist_{stock}_{model}.png",
                     plot_legend=False,
+                    score_names=["ask_volume_touch","bid_volume_touch","ask_volume","bid_volume"]
                 )
                 plt.close()
     
@@ -235,10 +236,10 @@ def run_plotting(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--score_dir", type=str, default="./results/scores")
-    parser.add_argument("--plot_dir", default="./results/plots", type=str)
+    parser.add_argument("--score_dir", type=str, default="/home/myuser/data/lobbench_scores/scores/special")
+    parser.add_argument("--plot_dir", default="/home/myuser/data/lobbench_scores/plots/special", type=str)
     parser.add_argument("--show_plots", action="store_true")
-    parser.add_argument("--model_name",default="large_model_sample",type=str)
+    parser.add_argument("--model_name",default="lobs5v1",type=str)
     parser.add_argument("--histograms", action="store_true", default=False,
                         help="Plot histograms of scores")
     args = parser.parse_args()

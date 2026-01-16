@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
 from partitioning import flatten
+from scratch import oxford_colors as ouc
 
 
 def hist(
@@ -150,7 +151,7 @@ def facet_grid_hist(
                     bins=[val, val+binwidth],
                     alpha=0.5,
                     edgecolor="black",
-                    color="C0",
+                    color=ouc.MAIN_COLOUR_CYCLE[0],
                 )
             if "generated" in df_.type.values:
                 ax.hist(
@@ -158,7 +159,7 @@ def facet_grid_hist(
                     bins=[val, val+binwidth],
                     alpha=0.5,
                     edgecolor="black",
-                    color="C1",
+                    color=ouc.MAIN_COLOUR_CYCLE[1],
                 )
             ax.set_xlabel(var_eval)
             ax.set_ylabel("")
@@ -175,7 +176,7 @@ def facet_grid_hist(
             ax=ax, alpha=0.5, bins=bins,
             # binwidth=binwidth,
             edgecolor="black",
-            palette={"real": "C0", "generated": "C1"},
+            palette={"real": ouc.MAIN_COLOUR_CYCLE[0], "generated": ouc.MAIN_COLOUR_CYCLE[1]},
         )
 
         ax.set_xlabel(var_eval)
@@ -208,8 +209,8 @@ def facet_grid_hist(
     plt.suptitle(suptitle, fontweight='bold')
     plt.legend(
         [
-            Line2D([0], [0], color='C0', lw=4, alpha=0.5),
-            Line2D([0], [0], color='C1', lw=4, alpha=0.5),
+            Line2D([0], [0], color=ouc.MAIN_COLOUR_CYCLE[0], lw=4, alpha=0.5),
+            Line2D([0], [0], color=ouc.MAIN_COLOUR_CYCLE[1], lw=4, alpha=0.5),
         ],
         ["real", "generated"],
         loc="lower center",
@@ -305,27 +306,36 @@ def hist_subplots(
     suptile: Optional[str] = None,
     save_path: Optional[str] = None,
     plot_legend: bool = True,
+    score_names: Optional[list] = None,
 ) -> Iterable[plt.Axes]:
     """
     """
     if axs is None:
-        fig, axs = plt.subplots(np.ceil(len(plot_fns) / 2).astype(int), 2, figsize=figsize)
+        if score_names is not None:
+            n_plots = sum([1 for name in plot_fns.keys() if name in score_names])
+        else:
+            n_plots = len(plot_fns)
+        fig, axs = plt.subplots(np.ceil(n_plots / 2).astype(int), 2, figsize=figsize)
     axs = axs.reshape(-1)
-
+    j=0
     for i, (name, fn) in enumerate(plot_fns.items()):
-        fn(name, axs[i])
-        # axs[i].set_xlim(x_ranges[i])
-        if (i == 0) and plot_legend:
-            # move legend location to the right
-            axs[i].legend(
-                loc='upper center',
-                bbox_to_anchor=(0.5, 1.45),
-                ncol=3,
-            )
-        if i > 0:
-            legend = axs[i].get_legend()
-            if legend:
-                legend.remove()
+        if score_names is None or name in score_names:
+            if score_names is not None:
+                i=j
+                j+=1
+            fn(name, axs[i])
+            # axs[i].set_xlim(x_ranges[i])
+            if (i == 0) and plot_legend:
+                # move legend location to the right
+                axs[i].legend(
+                    loc='upper center',
+                    bbox_to_anchor=(0.5, 1.45),
+                    ncol=3,
+                )
+            if i > 0:
+                legend = axs[i].get_legend()
+                if legend:
+                    legend.remove()
 
     # lines_labels = [ax.get_legend_handles_labels() for ax in axs]
     # lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
@@ -356,14 +366,9 @@ def spider_plot(
     save_path: Optional[str] = None,
 ) -> go.Figure:
 
-    assert len(scores_models) <= 4, "Only max 4 models can be compared at once"
+    assert len(scores_models) <= 5, "Only max 4 models can be compared at once"
 
-    default_colors = [
-        "rgba(0.12156863, 0.46666667, 0.70588235, 0.2)",
-        "rgba(1.0, 0.59607843, 0.2, 0.2)",
-        "rgba(0.16862745, 0.78039216, 0.45098039, 0.2)",
-        "rgba(0.90196078, 0.25098039, 0.25098039, 0.2)"
-    ]
+    default_colors = ["rgba"+str(tuple(int(c.lstrip('#')[i:i+2], 16)/255 for i in (0, 2, 4)) + (0.2,)) for c in ouc.MAIN_COLOUR_CYCLE]
 
     fig = go.Figure()
     for i, (model, scores) in enumerate(scores_models.items()):
@@ -418,12 +423,14 @@ def spider_plot(
             for s in scores.values()
     ])
     fig.update_layout(
-        width=600,
-        height=400,
+        width=1000,
+        height=500,
         polar=dict(
             angularaxis=dict(
                 rotation=180 - 180/len(labels),
-                direction='clockwise'  # Set the rotation direction (clockwise or counterclockwise)
+                direction='clockwise',  # Set the rotation direction (clockwise or counterclockwise)
+                tickfont=dict(size=12),
+
             ),
             radialaxis=dict(
                 visible=True,
@@ -492,7 +499,7 @@ def summary_plot(
                         scatter_x,
                         ['mean', 'median', 'IQM'],
                         marker='x',
-                        color=f"C{i_model}",
+                        color=ouc.MAIN_COLOUR_CYCLE[i_model],
                         label=model,
                     )
                     # add errorbars
@@ -501,7 +508,7 @@ def summary_plot(
                         y=['mean', 'median', 'IQM'],
                         xerr=np.diff(cis, axis=1).T[0],
                         fmt='none',
-                        color=f'C{i_model}',
+                        color=ouc.MAIN_COLOUR_CYCLE[i_model],
                     )
                     ax.set_ylim(-1, 3)
 
@@ -593,6 +600,7 @@ def loss_bars(
         x="score",
         y="mean",
         hue="model",
+        palette=ouc.MAIN_COLOUR_CYCLE
     )
     # ERROR BARS
     # get x-coords of bars only (without the legend elements)
