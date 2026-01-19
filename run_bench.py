@@ -168,13 +168,13 @@ DEFAULT_SCORING_CONFIG_CONTEXT = {
             "discrete": True,
         }
     },
-    "bid_volume_touch | spread": {
-        "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
-        "context_fn": lambda m, b: eval.spread(m, b).values,
-        "context_config": {
-            "discrete": True,
-        }
-    },
+    # "bid_volume_touch | spread": {
+    #     "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    #     "context_fn": lambda m, b: eval.spread(m, b).values,
+    #     "context_config": {
+    #         "discrete": True,
+    #     }
+    # },
 }
 
 

@@ -218,7 +218,7 @@ def compute_metrics_context(
     Returns:
         metric: dict[metric_name: dict[regime_id: (point_est, ci, bootstrapped_losses)]]
         score_df: DataFrame with columns [score, group, type, score_context]
-        plot_fn: Dummy function (plotting not implemented for contextual)
+        plot_fn: Function to plot per-regime score distributions
     """
     score_df = score_data_context(
         loader, scoring_fn, scoring_fn_context,
@@ -258,10 +258,45 @@ def compute_metrics_context(
             
             metric[m_name][regime_id] = (point_est, ci, bootstrapped)
     
-    # Dummy plot function (plotting not implemented for contextual)
-    plot_fn = lambda title, ax: None
+    # Create plot function for per-regime score distributions
+    plot_fn = lambda title, ax: _plot_context_regimes(score_df, title, ax)
     
     return metric, score_df, plot_fn
+
+
+def _plot_context_regimes(score_df, title, ax):
+    """
+    Plot score distributions for each regime side-by-side.
+    Shows real (blue) vs generated (orange) scores per regime.
+    """
+    regimes = sorted(score_df['group'].unique())
+    
+    # Color palette: real=blue, generated=orange
+    colors = {'real': '#1f77b4', 'generated': '#ff7f0e'}
+    
+    # Plot histograms for each regime
+    for regime_id in regimes:
+        regime_data = score_df[score_df['group'] == regime_id]
+        
+        # Separate real and generated scores
+        real_scores = regime_data[regime_data['type'] == 'real']['score'].values
+        gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
+        
+        # Compute histogram bins
+        all_scores = np.concatenate([real_scores, gen_scores])
+        bins = np.histogram_bin_edges(all_scores, bins=20)
+        
+        # Plot histograms
+        ax.hist(real_scores, bins=bins, alpha=0.6, label=f'Real (Regime {regime_id})', 
+                color=colors['real'], edgecolor='black')
+        ax.hist(gen_scores, bins=bins, alpha=0.6, label=f'Generated (Regime {regime_id})', 
+                color=colors['generated'], edgecolor='black')
+    
+    ax.set_xlabel('Score')
+    ax.set_ylabel('Frequency')
+    ax.set_title(title)
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
 
 
 def score_prediction_horizons(

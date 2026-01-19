@@ -79,6 +79,7 @@ def run_plotting(
     print("[*] Loading data...")
     uncond_files = sorted(glob(score_dir + "/scores_uncond_*.pkl"))
     cond_files = sorted(glob(score_dir + "/scores_cond_*.pkl"))
+    context_files = sorted(glob(score_dir + "/scores_context_*.pkl"))
     div_files = sorted(glob(score_dir + "/scores_div_*.pkl"))
     if len(div_files) > 0:
         div_horizon_length = int(div_files[0].split("_")[-3])
@@ -88,6 +89,8 @@ def run_plotting(
         all_scores_uncond, all_dfs_uncond = _load_all_scores(uncond_files)
     if len(cond_files) > 0:
         all_scores_cond, all_dfs_cond = _load_all_scores(cond_files)
+    if len(context_files) > 0:
+        all_scores_context, all_dfs_context = _load_all_scores(context_files)
     if len(div_files) > 0:
         all_scores_div, all_dfs_div = _load_all_scores(div_files)
 
@@ -228,6 +231,53 @@ def run_plotting(
                     )
                     plt.close()
 
+    if len(context_files) > 0:
+        # CONTEXTUAL score histograms and regime analysis
+        print("[*] Plotting contextual regime histograms")
+        for stock, score_stock in tqdm(all_dfs_context.items(), position=0, desc="Stock"):
+            for model, score_model in tqdm(score_stock.items(), position=1, desc="Model", leave=False):
+                for score_name, score_df in score_model.items():
+                    print(f"[*] Plotting {stock} {model} contextual regimes for {score_name}")
+                    
+                    # Get unique regimes and plot each regime's distribution
+                    regimes = sorted(score_df['group'].unique())
+                    n_regimes = len(regimes)
+                    
+                    fig, axes = plt.subplots(1, n_regimes, figsize=(6*n_regimes, 5))
+                    if n_regimes == 1:
+                        axes = [axes]
+                    
+                    for ax, regime_id in zip(axes, regimes):
+                        regime_data = score_df[score_df['group'] == regime_id]
+                        
+                        # Separate real and generated scores
+                        real_scores = regime_data[regime_data['type'] == 'real']['score'].values
+                        gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
+                        
+                        # Compute histogram bins
+                        all_scores = np.concatenate([real_scores, gen_scores])
+                        bins = np.histogram_bin_edges(all_scores, bins=15)
+                        
+                        # Plot histograms
+                        ax.hist(real_scores, bins=bins, alpha=0.6, label='Real', 
+                               color='#1f77b4', edgecolor='black')
+                        ax.hist(gen_scores, bins=bins, alpha=0.6, label='Generated', 
+                               color='#ff7f0e', edgecolor='black')
+                        
+                        ax.set_title(f'Regime {regime_id}', fontsize=12)
+                        ax.set_xlabel('Score')
+                        ax.set_ylabel('Frequency')
+                        ax.legend()
+                        ax.grid(True, alpha=0.3)
+                    
+                    plt.suptitle(f'{stock} {model} - {score_name} (Contextual Regimes)', 
+                                fontsize=14)
+                    plt.tight_layout()
+                    plt.savefig(
+                        f"{plot_dir}/hist_context_{stock}_{model}_{score_name.replace(' | ', '_')}.png",
+                        bbox_inches="tight", dpi=300
+                    )
+                    plt.close()
 
     print("[*] Done")
 
