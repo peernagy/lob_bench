@@ -154,19 +154,31 @@ def score_data_context(
     Unlike conditional scoring which applies secondary binning within each regime,
     contextual scoring evaluates performance directly within each regime.
     
-    Grouping is done based on scoring_fn_context (e.g., spread),
-    and scores are based on scoring_fn.
+    Grouping is done based on scoring_fn_context applied to CONDITIONAL data,
+    and scores are based on scoring_fn applied to real/generated data.
     
     Returns score_df with columns [score, group, type, score_context],
     where 'group' is the regime ID from the contextual variable.
     """
-    # calc scores defining the context/regime (e.g., spread levels)
-    scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_context)
+    # calc scores defining the context/regime from CONDITIONAL sequences (e.g., spread levels)
+    # This provides the regime bins based on actual market conditions
+    scores_cond = partitioning.score_cond(loader, scoring_fn_context)
+    
+    # Use conditional scores to define regime boundaries via binning
+    # We need dummy real/gen scores just for binning threshold calculation
     groups_real, groups_gen, thresholds = partitioning.group_by_score(
-        scores_real, scores_gen,
+        scores_cond, scores_cond,  # Use same cond scores for threshold computation
         return_thresholds=True,
         **score_context_kwargs
     )
+    
+    # Now assign real/gen data to the same regimes defined by conditional data
+    scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_context)
+    # Map real/gen to regime groups using the same thresholds from conditional
+    groups_real, groups_gen = partitioning.group_by_score(
+        scores_real, scores_gen,
+        **score_context_kwargs
+    )[:2]  # Don't need thresholds again
     
     # calc scores of interest (evaluation metric within each regime)
     eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)

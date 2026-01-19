@@ -13,7 +13,7 @@ The contextual scoring system reveals **per-regime performance degradation** by 
 ### New Functions Added to `scoring.py`
 
 #### 1. `score_data_context()`
-Bins data by contextual regime (e.g., spread levels) without secondary binning.
+Defines regimes using **conditional sequences** (`seq.m_cond, seq.b_cond`), then evaluates metrics within each regime.
 
 ```python
 score_df = score_data_context(
@@ -25,10 +25,10 @@ score_df = score_data_context(
 ```
 
 **Returns**: DataFrame with columns `[score, group, type, score_context]`
-- `score`: The evaluation metric (e.g., ask_volume)
-- `group`: Regime ID (e.g., 0=low spread, 1=medium, 2=high)
+- `score`: Evaluation metric (e.g., ask_volume)
+- `group`: Regime ID (0=low spread, 1=medium, 2=high)
 - `type`: 'real' or 'generated'
-- `score_context`: The contextual variable value (spread)
+- `score_context`: Context value from conditional data
 
 #### 2. `compute_metrics_context()`
 Calculates metrics separately per regime without aggregation.

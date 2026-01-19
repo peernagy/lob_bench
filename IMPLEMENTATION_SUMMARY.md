@@ -7,10 +7,10 @@ The contextual scoring system has been successfully implemented to expose contex
 ## What Was Implemented
 
 ### 1. **`score_data_context()` function** in [scoring.py](scoring.py#L144)
-- Bins data by contextual regime (e.g., spread levels) 
-- No secondary binning (unlike conditional scoring)
+- Defines regimes using **conditional sequences** via `partitioning.score_cond()`
+- Establishes regime boundaries from actual market conditions (conditional data)
+- Maps real/gen evaluation data to those regimes
 - Returns DataFrame with columns: `[score, group, type, score_context]`
-- Uses `partitioning.score_real_gen()` and `partitioning.group_by_score()` following existing patterns
 
 ### 2. **`compute_metrics_context()` function** in [scoring.py](scoring.py#L191)
 - Calculates metrics **separately per regime** without aggregation
@@ -156,10 +156,11 @@ The per-regime structure enables:
 
 ## Technical Notes
 
-- **Binning**: Uses `partitioning.group_by_score()` with configurable methods
-- **Metrics**: Works with both conditional (tuple) and unconditional (scalar) metric functions
-- **Bootstrap**: Preserves full bootstrap distributions for statistical testing
-- **Confidence intervals**: Computed per-regime via percentiles (default: 99% CI)
+- **Regime Definition**: Uses conditional sequences (`score_cond()`) to define market regime boundaries
+- **Regime Mapping**: Real/gen data mapped to regimes using same thresholds from conditional data
+- **Metrics**: Per-regime calculations with both conditional (tuple) and unconditional (scalar) metric functions
+- **Bootstrap**: Preserves full bootstrap distributions per regime for statistical testing
+- **Confidence intervals**: Computed per-regime via percentiles (default: 99% CI, configurable via `ci_alpha`)
 
 ## Validation
 

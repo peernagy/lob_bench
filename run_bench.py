@@ -270,72 +270,72 @@ def run_benchmark(
                         )
                         print("... done")
 
-                    if (not args.cond_only) and (not args.div_only):
-                        print("[*] Running unconditional scoring")
-                        scores, score_dfs, plot_fns = scoring.run_benchmark(
-                            loader,
-                            scoring_config,
-                            # default_metric=metrics.l1_by_group
-                            # default_metric=metrics.wasserstein
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores,
-                            score_dfs,
-                            args.save_dir+"/scores"
-                            + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
-                        )
-                        print("... done")
+                    # if (not args.cond_only) and (not args.div_only):
+                    #     print("[*] Running unconditional scoring")
+                    #     scores, score_dfs, plot_fns = scoring.run_benchmark(
+                    #         loader,
+                    #         scoring_config,
+                    #         # default_metric=metrics.l1_by_group
+                    #         # default_metric=metrics.wasserstein
+                    #         default_metric=metric_config
+                    #     )
+                    #     print("[*] Saving results...")
+                    #     save_results(
+                    #         scores,
+                    #         score_dfs,
+                    #         args.save_dir+"/scores"
+                    #         + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
+                    #     )
+                    #     print("... done")
 
-                    if (not args.uncond_only) and (not args.div_only):
-                        print("[*] Running conditional scoring")
-                        scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
-                            loader,
-                            scoring_config_cond,
-                            # default_metric=metrics.l1_by_group
-                            # default_metric=metrics.wasserstein
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_cond,
-                            score_dfs_cond,
-                            args.save_dir+"/scores"
-                            + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
-                        )
-                        print("...done")
+                    # if (not args.uncond_only) and (not args.div_only):
+                    #     print("[*] Running conditional scoring")
+                    #     scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
+                    #         loader,
+                    #         scoring_config_cond,
+                    #         # default_metric=metrics.l1_by_group
+                    #         # default_metric=metrics.wasserstein
+                    #         default_metric=metric_config
+                    #     )
+                    #     print("[*] Saving results...")
+                    #     save_results(
+                    #         scores_cond,
+                    #         score_dfs_cond,
+                    #         args.save_dir+"/scores"
+                    #         + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
+                    #     )
+                    #     print("...done")
 
-                    if (not args.cond_only) and (not args.uncond_only):
-                        print("[*] Running divergence scoring")
-                        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
-                            loader, scoring_config, metrics.l1_by_group,
-                            divergence_horizon=args.divergence_horizon,
-                            divergence=True
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_,
-                            score_dfs_,
-                            args.save_dir+"/scores"
-                            + f"/scores_div_{stock}_{model_name}_"
-                            + f"{args.divergence_horizon}_{time_str}.pkl"
-                        )
+                    # if (not args.cond_only) and (not args.uncond_only):
+                    #     print("[*] Running divergence scoring")
+                    #     scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+                    #         loader, scoring_config, metrics.l1_by_group,
+                    #         divergence_horizon=args.divergence_horizon,
+                    #         divergence=True
+                    #     )
+                    #     print("[*] Saving results...")
+                    #     save_results(
+                    #         scores_,
+                    #         score_dfs_,
+                    #         args.save_dir+"/scores"
+                    #         + f"/scores_div_{stock}_{model_name}_"
+                    #         + f"{args.divergence_horizon}_{time_str}.pkl"
+                    #     )
 
-                    if args.div_error_bounds:
-                        print("[*] Calculating divergence lower bounds...")
-                        baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
-                            score_dfs_,
-                            metrics.l1_by_group
-                        )
-                        print("[*] Saving baseline errors...")
-                        save_results(
-                            baseline_errors_by_score,
-                            None,
-                            args.save_dir+"/scores"
-                            + f"/scores_div_{stock}_REAL_"
-                            + f"{args.divergence_horizon}_{time_str}.pkl"
-                        )
+                    # if args.div_error_bounds:
+                    #     print("[*] Calculating divergence lower bounds...")
+                    #     baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+                    #         score_dfs_,
+                    #         metrics.l1_by_group
+                    #     )
+                    #     print("[*] Saving baseline errors...")
+                    #     save_results(
+                    #         baseline_errors_by_score,
+                    #         None,
+                    #         args.save_dir+"/scores"
+                    #         + f"/scores_div_{stock}_REAL_"
+                    #         + f"{args.divergence_horizon}_{time_str}.pkl"
+                    #     )
 
                     print("[*] Done")
 
