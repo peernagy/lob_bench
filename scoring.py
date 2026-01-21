@@ -146,60 +146,39 @@ def score_data_context(
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
     *,
-    return_plot_fn: bool = False,
     score_context_kwargs: dict = {},
 ):
     """
-    Context-aware scoring that bins by contextual regimes (e.g., spread regimes).
-    Unlike conditional scoring which applies secondary binning within each regime,
-    contextual scoring evaluates performance directly within each regime.
+    Context-aware scoring that evaluates performance within market regimes.
     
-    Grouping is done based on scoring_fn_context applied to CONDITIONAL data,
-    and scores are based on scoring_fn applied to real/generated data.
+    Regimes are defined from CONDITIONAL data using scoring_fn_context.
+    The evaluation metric is computed from real/generated data using scoring_fn,
+    and compared within each regime.
     
-    Returns score_df with columns [score, group, type, score_context],
-    where 'group' is the regime ID from the contextual variable.
+    Returns:
+        score_df: DataFrame with columns [score, group, type]
+        where 'group' is the regime ID from conditional data
     """
-    # calc scores defining the context/regime from CONDITIONAL sequences (e.g., spread levels)
-    # This provides the regime bins based on actual market conditions
+    # Step 1: Define regimes from CONDITIONAL data
     scores_cond = partitioning.score_cond(loader, scoring_fn_context)
-    
-    # Use conditional scores to define regime boundaries via binning
-    # We need dummy real/gen scores just for binning threshold calculation
-    groups_real, groups_gen, thresholds = partitioning.group_by_score(
-        scores_cond, scores_cond,  # Use same cond scores for threshold computation
+    _, _, thresholds = partitioning.group_by_score(
+        scores_cond, scores_cond,
         return_thresholds=True,
         **score_context_kwargs
     )
     
-    # Now assign real/gen data to the same regimes defined by conditional data
+    # Step 2: Assign real/gen data to the same regimes using thresholds from conditional
     scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_context)
-    # Map real/gen to regime groups using the same thresholds from conditional
     groups_real, groups_gen = partitioning.group_by_score(
         scores_real, scores_gen,
-        **score_context_kwargs
-    )[:2]  # Don't need thresholds again
+        thresholds=thresholds
+    )[:2]
     
-    # calc scores of interest (evaluation metric within each regime)
+    # Step 3: Evaluate metric of interest within each regime
     eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
     score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
     
-    # Add the contextual scores for reference
-    score_df_context = partitioning.get_score_table(scores_real, scores_gen, groups_real, groups_gen)
-    score_df['score_context'] = score_df_context.score
-    
-    if return_plot_fn:
-        plot_fn = lambda title, ax: plotting.hist(
-            scores_real,
-            scores_gen,
-            bins=thresholds,
-            title=title,
-            xlabel=title,
-            ax=ax,
-        )
-        return score_df, plot_fn
-    else:
-        return score_df
+    return score_df
 
 
 def compute_metrics_context(
@@ -209,7 +188,7 @@ def compute_metrics_context(
     scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
     score_context_kwargs: dict = {},
     ci_alpha: float = 0.01,
-) -> tuple[dict, pd.DataFrame, Callable]:
+) -> tuple[dict, pd.DataFrame]:
     """
     Compute metrics separately for each contextual regime (e.g., spread regime).
     Returns per-regime metrics without aggregation, exposing performance degradation
@@ -217,12 +196,10 @@ def compute_metrics_context(
     
     Returns:
         metric: dict[metric_name: dict[regime_id: (point_est, ci, bootstrapped_losses)]]
-        score_df: DataFrame with columns [score, group, type, score_context]
-        plot_fn: Function to plot per-regime score distributions
+        score_df: DataFrame with columns [score, group, type]
     """
     score_df = score_data_context(
         loader, scoring_fn, scoring_fn_context,
-        return_plot_fn=False,
         score_context_kwargs=score_context_kwargs
     )
     
@@ -240,8 +217,6 @@ def compute_metrics_context(
                 continue
             
             # Calculate metric for this regime
-            # mfn returns tuple: (point_est, ci, bootstrapped_losses) for conditional metrics
-            # or the metric value directly for unconditional metrics
             result = mfn(regime_df)
             
             # Handle both conditional (tuple) and unconditional (scalar) metric functions
@@ -258,45 +233,7 @@ def compute_metrics_context(
             
             metric[m_name][regime_id] = (point_est, ci, bootstrapped)
     
-    # Create plot function for per-regime score distributions
-    plot_fn = lambda title, ax: _plot_context_regimes(score_df, title, ax)
-    
-    return metric, score_df, plot_fn
-
-
-def _plot_context_regimes(score_df, title, ax):
-    """
-    Plot score distributions for each regime side-by-side.
-    Shows real (blue) vs generated (orange) scores per regime.
-    """
-    regimes = sorted(score_df['group'].unique())
-    
-    # Color palette: real=blue, generated=orange
-    colors = {'real': '#1f77b4', 'generated': '#ff7f0e'}
-    
-    # Plot histograms for each regime
-    for regime_id in regimes:
-        regime_data = score_df[score_df['group'] == regime_id]
-        
-        # Separate real and generated scores
-        real_scores = regime_data[regime_data['type'] == 'real']['score'].values
-        gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
-        
-        # Compute histogram bins
-        all_scores = np.concatenate([real_scores, gen_scores])
-        bins = np.histogram_bin_edges(all_scores, bins=20)
-        
-        # Plot histograms
-        ax.hist(real_scores, bins=bins, alpha=0.6, label=f'Real (Regime {regime_id})', 
-                color=colors['real'], edgecolor='black')
-        ax.hist(gen_scores, bins=bins, alpha=0.6, label=f'Generated (Regime {regime_id})', 
-                color=colors['generated'], edgecolor='black')
-    
-    ax.set_xlabel('Score')
-    ax.set_ylabel('Frequency')
-    ax.set_title(title)
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    return metric, score_df
 
 
 def score_prediction_horizons(
@@ -509,7 +446,7 @@ def run_benchmark(
             if score_context_fn is None:
                 raise ValueError(f"contextual=True but 'context_fn' not found in config for {score_name}")
             
-            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+            scores[score_name], score_dfs[score_name] = \
                 compute_metrics_context(
                     loader,
                     score_config["fn"],
