@@ -186,7 +186,7 @@ def run_benchmark(
                 "***\tThe script will iterate over all combinations of models and stocks\n")
 
     if scoring_config is None:
-        scoring_config = EXPERIMENTAL_SCORING_CONFIG #DEFAULT_SCORING_CONFIG
+        scoring_config = DEFAULT_SCORING_CONFIG #EXPERIMENTAL_SCORING_CONFIG #DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
     if metric_config is None:
