@@ -157,7 +157,7 @@ def facet_grid_hist(
                     bins=[val, val+binwidth],
                     alpha=0.5,
                     edgecolor="black",
-                    color=ouc.MAIN_COLOUR_CYCLE[0],
+                    # color=ouc.MAIN_COLOUR_CYCLE[0],
                 )
             if "generated" in df_.type.values:
                 ax.hist(
@@ -165,7 +165,7 @@ def facet_grid_hist(
                     bins=[val, val+binwidth],
                     alpha=0.5,
                     edgecolor="black",
-                    color=ouc.MAIN_COLOUR_CYCLE[1],
+                    # color=ouc.MAIN_COLOUR_CYCLE[1],
                 )
             ax.set_xlabel(var_eval)
             ax.set_ylabel("")
@@ -182,7 +182,7 @@ def facet_grid_hist(
             ax=ax, alpha=0.5, bins=bins,
             # binwidth=binwidth,
             edgecolor="black",
-            palette={"real": ouc.MAIN_COLOUR_CYCLE[0], "generated": ouc.MAIN_COLOUR_CYCLE[1]},
+            # palette={"real": ouc.MAIN_COLOUR_CYCLE[0], "generated": ouc.MAIN_COLOUR_CYCLE[1]},
         )
 
         ax.set_xlabel(var_eval)
@@ -215,8 +215,8 @@ def facet_grid_hist(
     plt.suptitle(suptitle, fontweight='bold')
     plt.legend(
         [
-            Line2D([0], [0], color=ouc.MAIN_COLOUR_CYCLE[0], lw=4, alpha=0.5),
-            Line2D([0], [0], color=ouc.MAIN_COLOUR_CYCLE[1], lw=4, alpha=0.5),
+            Line2D([0], [0], color='C0', lw=4, alpha=0.5),
+            Line2D([0], [0], color='C1', lw=4, alpha=0.5),
         ],
         ["real", "generated"],
         loc="lower center",
