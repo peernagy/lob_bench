@@ -72,7 +72,10 @@ def facet_grid_hist(
         print(f"Determining binwidth for {var_eval} | {var_cond} with {n_unique} unique values over range [{xmin}, {xmax}]")
         if binwidth is not None:
             print(f"Using provided binwidth={binwidth}")
-            bins = np.arange(xmin, xmax+binwidth, binwidth)
+            if xmin == xmax:
+                bins = np.array([xmin, xmin + binwidth])
+            else:
+                bins = np.arange(xmin, xmax+binwidth, binwidth)
         elif n_unique < 30:
             min_diff = pd.Series(unique_vals).diff().min()
             binwidth = min_diff if min_diff > 0 else 1
@@ -104,7 +107,10 @@ def facet_grid_hist(
         ):
             if n_unique < 30:
                 binwidth = (xmax - xmin) / n_unique
-                bins = np.arange(xmin, xmax+binwidth, binwidth)
+                if xmin == xmax:
+                    bins = np.array([xmin, xmin + binwidth])
+                else:
+                    bins = np.arange(xmin, xmax+binwidth, binwidth)
             else:
                 binwidth = None
                 bins = 'auto'
