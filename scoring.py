@@ -140,98 +140,100 @@ def score_data_cond(
     else:
         return score_df
 
-# TODO: Doesn't seem super efficient just yet, will need to reevaluate the implementation
-def score_cond_context(
+
+def score_data_context(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
     *,
-    return_plot_fn: bool = False,
-    score_kwargs: dict = {},
     score_context_kwargs: dict = {},
 ):
     """
-    Score eval metric stratified by context bins from conditional data.
+    Context-aware scoring that evaluates performance within market regimes.
     
-    Bins are computed from scoring_fn_context on the conditional sequences,
-    then eval scores are computed on real/gen at matching indices.
+    Regimes are defined from CONDITIONAL data using scoring_fn_context.
+    The evaluation metric is computed from real/generated data using scoring_fn,
+    and compared within each regime.
     
-    This allows evaluating model performance across different market contexts
-    (e.g., different spread regimes) to identify if a model performs better/worse
-    in specific conditions.
+    Returns:
+        score_df: DataFrame with columns [score, group, type]
+        where 'group' is the regime ID from conditional data
     """
-    scores_real_list = []
-    scores_gen_list = []
-    groups_real_list = []
-    groups_gen_list = []
-    
-    for i in tqdm(range(len(loader))):
-        seq = loader[i]
-        # Compute context bins from conditional data
-        scores_context = scoring_fn_context(seq.m_cond, seq.b_cond)
-        
-        # Bin context scores
-        groups_context = partitioning.group_by_score(
-            scores_context,
-            **score_context_kwargs
-        )
-        
-        # For each unique bin, score real/gen at those indices
-        for bin_idx in np.unique(groups_context):
-            mask = groups_context == bin_idx
-            indices = np.where(mask)[0]
-            
-            if len(indices) == 0:
-                continue
-            
-            # Extract and score real data
-            m_real_bin = seq.m_real.iloc[indices]
-            b_real_bin = seq.b_real.iloc[indices]
-            
-            score_real = scoring_fn(m_real_bin, b_real_bin)
-            scores_real_list.append(score_real)
-            
-            # Track group assignment
-            num_scores_real = len(score_real) if hasattr(score_real, '__len__') else 1
-            groups_real_list.append(np.full(num_scores_real, bin_idx))
-            
-            # Extract and score generated data
-            if seq.m_gen is not None:
-                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
-                    m_gen_bin = m_gen.iloc[indices]
-                    b_gen_bin = b_gen.iloc[indices]
-                    
-                    score_gen = scoring_fn(m_gen_bin, b_gen_bin)
-                    scores_gen_list.append(score_gen)
-                    
-                    num_scores_gen = len(score_gen) if hasattr(score_gen, '__len__') else 1
-                    groups_gen_list.append(np.full(num_scores_gen, bin_idx))
-    
-    # Flatten all scores and groups
-    scores_real_flat = partitioning.flatten(scores_real_list)
-    scores_gen_flat = partitioning.flatten(scores_gen_list) if scores_gen_list else np.array([])
-    groups_real_flat = partitioning.flatten(groups_real_list)
-    groups_gen_flat = [partitioning.flatten(groups_gen_list)] if groups_gen_list else [np.array([])]
-    
-    # Build score table
-    score_df = partitioning.get_score_table(
-        scores_real_flat, 
-        [scores_gen_flat] if len(scores_gen_flat) > 0 else None, 
-        groups_real_flat, 
-        groups_gen_flat if len(scores_gen_flat) > 0 else None
+    # Step 1: Define regimes from CONDITIONAL data
+    scores_cond = partitioning.score_cond(loader, scoring_fn_context)
+    _, _, thresholds = partitioning.group_by_score(
+        scores_cond, scores_cond,
+        return_thresholds=True,
+        **score_context_kwargs
     )
     
-    if return_plot_fn:
-        plot_fn = lambda title, ax: plotting.hist(
-            scores_real_flat,
-            [scores_gen_flat] if len(scores_gen_flat) > 0 else [],
-            title=title,
-            xlabel=title,
-            ax=ax,
-        )
-        return score_df, plot_fn
-    else:
-        return score_df
+    # Step 2: Assign real/gen data to the same regimes using thresholds from conditional
+    scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_context)
+    groups_real, groups_gen = partitioning.group_by_score(
+        scores_real, scores_gen,
+        thresholds=thresholds
+    )[:2]
+    
+    # Step 3: Evaluate metric of interest within each regime
+    eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
+    score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
+    
+    return score_df
+
+
+def compute_metrics_context(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    metric_fn: dict[str, Callable[[pd.DataFrame], float]],
+    scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
+    score_context_kwargs: dict = {},
+    ci_alpha: float = 0.01,
+) -> tuple[dict, pd.DataFrame]:
+    """
+    Compute metrics separately for each contextual regime (e.g., spread regime).
+    Returns per-regime metrics without aggregation, exposing performance degradation
+    in specific market conditions.
+    
+    Returns:
+        metric: dict[metric_name: dict[regime_id: (point_est, ci, bootstrapped_losses)]]
+        score_df: DataFrame with columns [score, group, type]
+    """
+    score_df = score_data_context(
+        loader, scoring_fn, scoring_fn_context,
+        score_context_kwargs=score_context_kwargs
+    )
+    
+    # Calculate metrics separately for each regime
+    metric = {}
+    regimes = sorted(score_df['group'].unique())
+    
+    for m_name, mfn in metric_fn.items():
+        metric[m_name] = {}
+        
+        for regime_id in regimes:
+            regime_df = score_df[score_df['group'] == regime_id].copy()
+            
+            if len(regime_df) == 0:
+                continue
+            
+            # Calculate metric for this regime
+            result = mfn(regime_df)
+            
+            # Handle both conditional (tuple) and unconditional (scalar) metric functions
+            if isinstance(result, tuple) and len(result) == 3:
+                point_est, _, bootstrapped = result
+            else:
+                # For unconditional metrics that return scalar, wrap in expected format
+                point_est = result
+                bootstrapped = np.array([result])
+            
+            # Calculate confidence intervals for this regime
+            q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+            ci = np.percentile(bootstrapped, q)
+            
+            metric[m_name][regime_id] = (point_est, ci, bootstrapped)
+    
+    return metric, score_df
 
 
 def score_prediction_horizons(
@@ -419,8 +421,8 @@ def run_benchmark(
     scoring_config_dict: dict,
     default_metric: Callable[[pd.DataFrame], float],
     divergence: bool = False,
+    contextual: bool = False,
     divergence_horizon: int = 50,
-    scoring_type: str = "unconditional",
 ) -> tuple[
     dict[str, float],
     dict[str, pd.DataFrame],
@@ -435,62 +437,77 @@ def run_benchmark(
         print("Calculating scores and metrics for: ", score_name, end="\r\n")
 
         # contextual scoring
-        if scoring_type == "context" and score_config.get("eval", None) is not None:
-            score_context_config = score_config["context"]
-            score_config_eval = score_config["eval"]
+        if contextual:
+            score_context_fn = score_config.get("context_fn", None)
+            score_context_config = score_config.get("context_config", {})
             score_context_kwargs = get_kwargs(score_context_config, conditional=True)
-            score_kwargs = get_kwargs(score_config_eval, conditional=True)
-            score_fn_context = score_context_config["fn"]
+            metric_fns = score_config.get("metric_fns", default_metric)
             
-            score_df = score_cond_context(
-                loader,
-                score_config_eval["fn"],
-                score_fn_context,
-                return_plot_fn=False,
-                score_kwargs=score_kwargs,
-                score_context_kwargs=score_context_kwargs,
-            )
-            score_dfs[score_name] = score_df
-            scores[score_name] = {}
-            plot_fns[score_name] = None
-            continue
-        
+            if score_context_fn is None:
+                raise ValueError(f"contextual=True but 'context_fn' not found in config for {score_name}")
+            
+            scores[score_name], score_dfs[score_name] = \
+                compute_metrics_context(
+                    loader,
+                    score_config["fn"],
+                    metric_fns,
+                    score_context_fn,
+                    score_context_kwargs=score_context_kwargs,
+                )
+
         # conditional scoring
-        if score_config.get("eval", None) is not None:
+        elif score_config.get("eval", None) is not None:
             score_cond_config = score_config["cond"]
             score_config = score_config["eval"]
             score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
             score_kwargs = get_kwargs(score_config, conditional=True)
             score_fn_cond = score_cond_config["fn"]
+            metric_fns = score_config.get("metric_fns", default_metric)
+
+            if divergence:
+                scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+                    compute_divergence_metrics(
+                        loader,
+                        score_config["fn"],
+                        metric_fns,
+                        divergence_horizon,
+                        **get_kwargs(score_config)
+                    )
+            else:
+                scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+                    compute_metrics(
+                        loader,
+                        score_config["fn"],
+                        metric_fns,
+                        score_fn_cond,
+                        score_kwargs=score_kwargs,
+                        score_cond_kwargs=score_cond_kwargs,
+                    )
+
         # unconditional scoring
         else:
-            score_cond_kwargs = {}
-            score_fn_cond = None
             score_kwargs = get_kwargs(score_config)
+            metric_fns = score_config.get("metric_fns", default_metric)
 
-        # print('score_cond_kwargs:', score_cond_kwargs)
-        metric_fns = score_config.get("metric_fns", default_metric)
-
-        if divergence:
-            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
-                compute_divergence_metrics(
-                    loader,
-                    score_config["fn"],
-                    metric_fns,
-                    divergence_horizon,
-                    **get_kwargs(score_config)
-                )
-
-        else:
-            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
-                compute_metrics(
-                    loader,
-                    score_config["fn"],
-                    metric_fns,
-                    score_fn_cond,
-                    score_kwargs=score_kwargs,
-                    score_cond_kwargs=score_cond_kwargs,
-                )
+            if divergence:
+                scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+                    compute_divergence_metrics(
+                        loader,
+                        score_config["fn"],
+                        metric_fns,
+                        divergence_horizon,
+                        **get_kwargs(score_config)
+                    )
+            else:
+                scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+                    compute_metrics(
+                        loader,
+                        score_config["fn"],
+                        metric_fns,
+                        None,
+                        score_kwargs=score_kwargs,
+                        score_cond_kwargs={},
+                    )
 
     return scores, score_dfs, plot_fns
 

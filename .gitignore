@@ -31,3 +31,5 @@ plots/*
 old_result_files/*
 sample_data/*  
 data
+Miniconda3*
+*.pyc
