@@ -446,7 +446,7 @@ def run_benchmark(
                 loader,
                 score_config_eval["fn"],
                 score_fn_context,
-                return_plot_fn=return_plot_fn,
+                return_plot_fn=False,
                 score_kwargs=score_kwargs,
                 score_context_kwargs=score_context_kwargs,
             )
