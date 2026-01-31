@@ -140,7 +140,7 @@ def score_data_cond(
     else:
         return score_df
 
-
+# TODO: Doesn't seem super efficient just yet, will need to reevaluate the implementation
 def score_cond_context(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -165,7 +165,8 @@ def score_cond_context(
     groups_real_list = []
     groups_gen_list = []
     
-    for seq in tqdm(loader.seqs):
+    for i in tqdm(range(len(loader))):
+        seq = loader[i]
         # Compute context bins from conditional data
         scores_context = scoring_fn_context(seq.m_cond, seq.b_cond)
         
