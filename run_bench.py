@@ -252,8 +252,42 @@ def run_benchmark(
 
                     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    # NEW: Contextual Scoring
-                    if True:
+                    # Unconditional Scoring
+                    if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.div_only):
+                        print("[*] Running unconditional scoring")
+                        scores, score_dfs, plot_fns = scoring.run_benchmark(
+                            loader,
+                            scoring_config,
+                            default_metric=metric_config
+                        )
+                        print("[*] Saving results...")
+                        save_results(
+                            scores,
+                            score_dfs,
+                            args.save_dir+"/scores"
+                            + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
+                        )
+                        print("... done")
+
+                    # Conditional Scoring
+                    if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.div_only):
+                        print("[*] Running conditional scoring")
+                        scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
+                            loader,
+                            scoring_config_cond,
+                            default_metric=metric_config
+                        )
+                        print("[*] Saving results...")
+                        save_results(
+                            scores_cond,
+                            score_dfs_cond,
+                            args.save_dir+"/scores"
+                            + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
+                        )
+                        print("... done")
+
+                    # Contextual Scoring
+                    if (args.run_all or args.context_only) and not (args.uncond_only or args.cond_only or args.div_only):
                         print("[*] Running contextual scoring:")
                         scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
                             loader,
@@ -270,72 +304,41 @@ def run_benchmark(
                         )
                         print("... done")
 
-                    # if (not args.cond_only) and (not args.div_only):
-                    #     print("[*] Running unconditional scoring")
-                    #     scores, score_dfs, plot_fns = scoring.run_benchmark(
-                    #         loader,
-                    #         scoring_config,
-                    #         # default_metric=metrics.l1_by_group
-                    #         # default_metric=metrics.wasserstein
-                    #         default_metric=metric_config
-                    #     )
-                    #     print("[*] Saving results...")
-                    #     save_results(
-                    #         scores,
-                    #         score_dfs,
-                    #         args.save_dir+"/scores"
-                    #         + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
-                    #     )
-                    #     print("... done")
+                    # Divergence Scoring
+                    if (args.run_all or args.div_only) and not (args.uncond_only or args.cond_only or args.context_only):
+                        print("[*] Running divergence scoring")
+                        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+                            loader,
+                            scoring_config,
+                            default_metric=metric_config,
+                            divergence_horizon=args.divergence_horizon,
+                            divergence=True
+                        )
+                        print("[*] Saving results...")
+                        save_results(
+                            scores_,
+                            score_dfs_,
+                            args.save_dir+"/scores"
+                            + f"/scores_div_{stock}_{model_name}_"
+                            + f"{args.divergence_horizon}_{time_str}.pkl"
+                        )
+                        print("... done")
 
-                    # if (not args.uncond_only) and (not args.div_only):
-                    #     print("[*] Running conditional scoring")
-                    #     scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
-                    #         loader,
-                    #         scoring_config_cond,
-                    #         # default_metric=metrics.l1_by_group
-                    #         # default_metric=metrics.wasserstein
-                    #         default_metric=metric_config
-                    #     )
-                    #     print("[*] Saving results...")
-                    #     save_results(
-                    #         scores_cond,
-                    #         score_dfs_cond,
-                    #         args.save_dir+"/scores"
-                    #         + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
-                    #     )
-                    #     print("...done")
-
-                    # if (not args.cond_only) and (not args.uncond_only):
-                    #     print("[*] Running divergence scoring")
-                    #     scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
-                    #         loader, scoring_config, metrics.l1_by_group,
-                    #         divergence_horizon=args.divergence_horizon,
-                    #         divergence=True
-                    #     )
-                    #     print("[*] Saving results...")
-                    #     save_results(
-                    #         scores_,
-                    #         score_dfs_,
-                    #         args.save_dir+"/scores"
-                    #         + f"/scores_div_{stock}_{model_name}_"
-                    #         + f"{args.divergence_horizon}_{time_str}.pkl"
-                    #     )
-
-                    # if args.div_error_bounds:
-                    #     print("[*] Calculating divergence lower bounds...")
-                    #     baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
-                    #         score_dfs_,
-                    #         metrics.l1_by_group
-                    #     )
-                    #     print("[*] Saving baseline errors...")
-                    #     save_results(
-                    #         baseline_errors_by_score,
-                    #         None,
-                    #         args.save_dir+"/scores"
-                    #         + f"/scores_div_{stock}_REAL_"
-                    #         + f"{args.divergence_horizon}_{time_str}.pkl"
-                    #     )
+                        if args.div_error_bounds:
+                            print("[*] Calculating divergence lower bounds...")
+                            baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+                                score_dfs_,
+                                metric_config
+                            )
+                            print("[*] Saving baseline errors...")
+                            save_results(
+                                baseline_errors_by_score,
+                                None,
+                                args.save_dir+"/scores"
+                                + f"/scores_div_{stock}_REAL_"
+                                + f"{args.divergence_horizon}_{time_str}.pkl"
+                            )
+                            print("... done")
 
                     print("[*] Done")
 
@@ -346,21 +349,44 @@ if __name__ == "__main__":
     parser.add_argument("--stock", nargs='+', default="GOOG")
     parser.add_argument("--time_period", nargs='+', default="2023_Jan")
     parser.add_argument("--model_version", nargs='+', default=None)
-    parser.add_argument("--data_dir", default="./data/evalsequences", type=str)
+    parser.add_argument("--data_dir", default="./data/data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
     parser.add_argument("--model_name", nargs='+', default="s5_main")
     parser.add_argument("--uncond_only", action="store_true")
     parser.add_argument("--cond_only", action="store_true")
+    parser.add_argument("--context_only", action="store_true")
     parser.add_argument("--div_only", action="store_true")
+    parser.add_argument("--all", action="store_true", dest="run_all")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     args = parser.parse_args()
 
-    assert not (args.uncond_only and args.cond_only), \
-        "Cannot specify both uncond_only and cond_only as args"
-
-    assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
-        "Cannot calculate divergence error bounds without running divergence scoring"
+    # Validate that --all is not combined with specific scoring flags
+    if args.run_all:
+        assert not (args.uncond_only or args.cond_only or args.context_only or args.div_only), \
+            "Cannot use --all flag with --uncond_only, --cond_only, --context_only, or --div_only"
+    
+    # Validate that at least one scoring type is specified
+    scoring_flags = [args.uncond_only, args.cond_only, args.context_only, args.div_only, args.run_all]
+    if not any(scoring_flags):
+        print("\n[!] No scoring type specified. Please choose one of the following:")
+        print("\n    Scoring Options:")
+        print("    --uncond_only         : Run only unconditional scoring")
+        print("    --cond_only           : Run only conditional scoring")
+        print("    --context_only        : Run only contextual scoring")
+        print("    --div_only            : Run only divergence scoring")
+        print("    --all                 : Run all scoring types")
+        print("\n    Example: python run_bench.py --context_only --stock GOOG --model_name s5_main")
+        print("             python run_bench.py --all --stock GOOG INTC --model_name s5_main s5v2_uncond\n")
+        exit(1)
+    
+    # Prevent conflicting single-type flags
+    if sum(scoring_flags) > 1 and not args.run_all:
+        assert False, \
+            "Cannot specify multiple scoring flags (--uncond_only, --cond_only, --context_only, --div_only) together. Use --all to run all types."
+    
+    assert not (args.div_error_bounds and not (args.div_only or args.run_all)), \
+        "Cannot calculate divergence error bounds without running divergence scoring (use --div_only or --all)"
     t0=time.time()
     run_benchmark(args)
     t1=time.time()
