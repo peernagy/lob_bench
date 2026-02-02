@@ -139,6 +139,46 @@ def run_plotting(
                     save_path=f"{plot_dir}/spider_{stock}_{metric}.png"
                 )
 
+    if len(time_lagged_files) > 0:
+        # TIME-LAGGED SUMMARY PLOTS
+        print("[*] Plotting time-lagged summary stats")
+        summary_stats_time_lagged = {
+            stock: {
+                model: scoring.summary_stats(
+                    all_scores_time_lagged[stock][model],
+                    bootstrap=True
+                )
+                for model in all_scores_time_lagged[stock].keys()
+            } for stock in all_scores_time_lagged
+        }
+        print(summary_stats_time_lagged)
+
+        plotting.summary_plot(
+            summary_stats_time_lagged,
+            save_path=f"{plot_dir}/summary_stats_time_lagged.png"
+        )
+
+        # COMPARISON PLOTS: bar plots and spider plots for time-lagged
+        print("[*] Plotting time-lagged comparison plots")
+        data_time_lagged = _scores_to_df(all_scores_time_lagged)
+        for stock in data_time_lagged.stock.unique():
+            for metric in data_time_lagged.metric.unique():
+                print(f"[*] Plotting {stock} {metric} time-lagged bar plots")
+                plotting.loss_bars(
+                    data_time_lagged,
+                    stock,
+                    metric,
+                    save_path=f"{plot_dir}/bar_time_lagged_{stock}_{metric}.png"
+                )
+                print(f"[*] Plotting {stock} {metric} time-lagged spider plots")
+                plotting.spider_plot(
+                    all_scores_time_lagged[stock],
+                    metric,
+                    title=f"{metric.capitalize()} Loss - Time-Lagged ({stock})",
+                    plot_cis=False,
+                    save_path=f"{plot_dir}/spider_time_lagged_{stock}_{metric}.png"
+                )
+
     if len(div_files) > 0:
         # divergence plots
         print("[*] Plotting divergence plots")
