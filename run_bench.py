@@ -20,6 +20,7 @@ import time
 DEFAULT_METRICS = {
     'l1': metrics.l1_by_group,
     'wasserstein': metrics.wasserstein,
+    'ks': metrics.ks_distance,
 }
 
 
@@ -28,90 +29,90 @@ DEFAULT_SCORING_CONFIG = {
         "fn": lambda m, b: eval.spread(m, b).values,
         "discrete": True,
     },
-    "orderbook_imbalance": {
-        "fn": lambda m, b: eval.orderbook_imbalance(m, b).values,
-    },
+    # "orderbook_imbalance": {
+    #     "fn": lambda m, b: eval.orderbook_imbalance(m, b).values,
+    # },
 
-    #  TIMES (log scale)
-    "log_inter_arrival_time": {
-        "fn": lambda m, b: np.log(
-            eval.inter_arrival_time(m)
-            .replace({0: 1e-9}).values.astype(float)
-        ),
-    },
-    "log_time_to_cancel": {
-        "fn": lambda m, b: np.log(
-            eval.time_to_cancel(m)
-            .dt.total_seconds()
-            .replace({0: 1e-9})
-            .values.astype(float)
-        ),
-    },
+    # #  TIMES (log scale)
+    # "log_inter_arrival_time": {
+    #     "fn": lambda m, b: np.log(
+    #         eval.inter_arrival_time(m)
+    #         .replace({0: 1e-9}).values.astype(float)
+    #     ),
+    # },
+    # "log_time_to_cancel": {
+    #     "fn": lambda m, b: np.log(
+    #         eval.time_to_cancel(m)
+    #         .dt.total_seconds()
+    #         .replace({0: 1e-9})
+    #         .values.astype(float)
+    #     ),
+    # },
 
-    # VOLUMES:
-    "ask_volume_touch": {
-        "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
-    },
-    "bid_volume_touch": {
-        "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
-    },
-    "ask_volume": {
-        "fn": lambda m, b: eval.total_volume(m, b, 10)
-        .ask_vol_10.values,
-    },
-    "bid_volume": {
-        "fn": lambda m, b: eval.total_volume(m, b, 10)
-        .bid_vol_10.values,
-    },
+    # # VOLUMES:
+    # "ask_volume_touch": {
+    #     "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+    # },
+    # "bid_volume_touch": {
+    #     "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    # },
+    # "ask_volume": {
+    #     "fn": lambda m, b: eval.total_volume(m, b, 10)
+    #     .ask_vol_10.values,
+    # },
+    # "bid_volume": {
+    #     "fn": lambda m, b: eval.total_volume(m, b, 10)
+    #     .bid_vol_10.values,
+    # },
 
-    # DEPTHS:
-    "limit_ask_order_depth": {
-        "fn": lambda m, b: eval.limit_order_depth(m, b)[0].values,
-    },
-    "limit_bid_order_depth": {
-        "fn": lambda m, b: eval.limit_order_depth(m, b)[1].values,
-    },
-    "ask_cancellation_depth": {
-        "fn": lambda m, b: eval.cancellation_depth(m, b)[0].values,
-    },
-    "bid_cancellation_depth": {
-        "fn": lambda m, b: eval.cancellation_depth(m, b)[1].values,
-    },
+    # # DEPTHS:
+    # "limit_ask_order_depth": {
+    #     "fn": lambda m, b: eval.limit_order_depth(m, b)[0].values,
+    # },
+    # "limit_bid_order_depth": {
+    #     "fn": lambda m, b: eval.limit_order_depth(m, b)[1].values,
+    # },
+    # "ask_cancellation_depth": {
+    #     "fn": lambda m, b: eval.cancellation_depth(m, b)[0].values,
+    # },
+    # "bid_cancellation_depth": {
+    #     "fn": lambda m, b: eval.cancellation_depth(m, b)[1].values,
+    # },
 
-    # LEVELS:
-    "limit_ask_order_levels": {
-        "fn": lambda m, b: eval.limit_order_levels(m, b)[0].values,
-        "discrete": True,
-    },
-    "limit_bid_order_levels": {
-        "fn": lambda m, b: eval.limit_order_levels(m, b)[1].values,
-        "discrete": True,
-    },
-    "ask_cancellation_levels": {
-        "fn": lambda m, b: eval.cancel_order_levels(m, b)[0].values,
-        "discrete": True,
-    },
-    "bid_cancellation_levels": {
-        "fn": lambda m, b: eval.cancel_order_levels(m, b)[1].values,
-        "discrete": True,
-    },
+    # # LEVELS:
+    # "limit_ask_order_levels": {
+    #     "fn": lambda m, b: eval.limit_order_levels(m, b)[0].values,
+    #     "discrete": True,
+    # },
+    # "limit_bid_order_levels": {
+    #     "fn": lambda m, b: eval.limit_order_levels(m, b)[1].values,
+    #     "discrete": True,
+    # },
+    # "ask_cancellation_levels": {
+    #     "fn": lambda m, b: eval.cancel_order_levels(m, b)[0].values,
+    #     "discrete": True,
+    # },
+    # "bid_cancellation_levels": {
+    #     "fn": lambda m, b: eval.cancel_order_levels(m, b)[1].values,
+    #     "discrete": True,
+    # },
 
-    # TRADES
-    "vol_per_min": {
-        "fn": lambda m, b: eval.volume_per_minute(m, b).values,
-    },
-    "ofi": {
-        "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
-    },
-    "ofi_up": {
-        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 1).values,
-    },
-    "ofi_stay": {
-        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 0).values,
-    },
-    "ofi_down": {
-        "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, -1).values,
-    },
+    # # TRADES
+    # "vol_per_min": {
+    #     "fn": lambda m, b: eval.volume_per_minute(m, b).values,
+    # },
+    # "ofi": {
+    #     "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    # },
+    # "ofi_up": {
+    #     "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 1).values,
+    # },
+    # "ofi_stay": {
+    #     "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, 0).values,
+    # },
+    # "ofi_down": {
+    #     "fn": lambda m, b: eval.orderflow_imbalance_cond_tick(m, b, -1).values,
+    # },
 }
 
 

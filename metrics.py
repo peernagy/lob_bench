@@ -87,6 +87,34 @@ def wasserstein(
     else:
         return w
 
+def ks_distance(
+    score_df: pd.DataFrame,
+    bootstrap_ci: bool = True,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+):
+    def _ks(score_df: pd.DataFrame):
+        p = score_df.loc[score_df['type'] == 'real', 'score']
+        q = score_df.loc[score_df['type'] == 'generated', 'score']
+        return stats.ks_2samp(p, q).statistic
+
+    if ('generated' not in score_df['type'].values) or ('real' not in score_df['type'].values):
+        if bootstrap_ci:
+            return np.nan, np.ones(2) * np.nan, np.ones(n_bootstrap+1) * np.nan
+        return np.nan
+
+    score_df = score_df.copy()
+    score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
+
+    ks = _ks(score_df)
+
+    if bootstrap_ci:
+        ci, losses = _bootstrap(score_df, _ks, n_bootstrap, ci_alpha, ks, rng_np)
+        return ks, ci, losses
+    else:
+        return ks
+
 def l1_by_group(
     score_df: pd.DataFrame,
     bootstrap_ci: bool = True,

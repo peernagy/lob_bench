@@ -85,6 +85,7 @@ def run_plotting(
         div_horizon_length = int(div_files[0].split("_")[-3])
 
     # load all scores
+    all_scores_cond = {}
     if len(uncond_files) > 0:
         all_scores_uncond, all_dfs_uncond = _load_all_scores(uncond_files)
     if len(cond_files) > 0:
