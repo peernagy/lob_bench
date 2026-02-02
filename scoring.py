@@ -141,6 +141,162 @@ def score_data_cond(
         return score_df
 
 
+def score_data_time_lagged(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    scoring_fn_lagged: Callable[[pd.DataFrame, pd.DataFrame], float],
+    lag: int,
+    *,
+    return_plot_fn: bool = False,
+    score_kwargs: dict = {},
+    score_lagged_kwargs: dict = {},
+):
+    """
+    Time-lagged evaluation: evaluate metric at time t conditioned on metric at time t-lag.
+    
+    Merges conditional data (first lag messages) with real/gen data, allowing evaluation
+    of how metrics at time t depend on lagged metric values from time t-lag.
+    
+    Returns DataFrame with columns [score, group, subgroup, score_lagged, type]
+    where:
+        - score: evaluation metric at time t (from scoring_fn)
+        - score_lagged: conditioning metric at time t-lag (from scoring_fn_lagged)
+        - group: bin assignment for score_lagged
+        - subgroup: bin assignment for score within each group
+        - type: 'real' or 'generated'
+    """
+    # Helper function to merge conditional and main sequences
+    def merge_with_lag(m_cond, b_cond, m_main, b_main, lag):
+        """
+        Merge conditional sequence with main sequence and extract lagged values.
+        
+        After merge: cond_data (positions 0:lag) + main_data (positions lag:lag+len(main))
+        For each position t >= lag in merged data, the lagged value is at position t-lag.
+        We keep only positions lag:end in merged, so lagged values are from positions 0:len(merged)-lag.
+        
+        Returns:
+            m_merged, b_merged: main_data with first lag points dropped
+            scores_lagged: conditioning metric from merged data, shifted to align with main data
+        """
+        # Concatenate: conditional data followed by main data
+        m_merged = pd.concat([m_cond, m_main], ignore_index=True)
+        b_merged = pd.concat([b_cond, b_main], ignore_index=True)
+        
+        # Apply lagged scoring function to get full merged scores
+        scores_merged = scoring_fn_lagged(m_merged, b_merged)
+        
+        # Extract lagged scores: for position t in main (which is t+lag in merged),
+        # the lagged value is from position (t+lag)-lag = t in merged
+        # So we take scores_merged[0:len(main)] = scores_merged[0:len(m_merged)-lag]
+        if isinstance(scores_merged, np.ndarray):
+            scores_lagged = scores_merged[:len(scores_merged) - lag]
+        else:
+            scores_lagged = scores_merged.iloc[:len(scores_merged) - lag].values
+        
+        # Keep main data only (drop conditional prefix)
+        m_merged = m_merged.iloc[lag:].reset_index(drop=True)
+        b_merged = b_merged.iloc[lag:].reset_index(drop=True)
+        
+        return m_merged, b_merged, scores_lagged
+    
+    # Collect scores from all sequences
+    all_eval_real = []
+    all_eval_gen = []
+    all_scores_lagged_real = []
+    all_scores_lagged_gen = []
+    
+    for seq in loader:
+        m_cond = seq.m_cond
+        b_cond = seq.b_cond
+        m_real = seq.m_real
+        b_real = seq.b_real
+        m_gen = seq.m_gen
+        b_gen = seq.b_gen
+        
+        # Merge conditional + real and apply lag
+        m_real_merged, b_real_merged, scores_lagged_real = merge_with_lag(
+            m_cond, b_cond, m_real, b_real, lag
+        )
+        
+        # Apply evaluation scoring function to merged real data
+        eval_real = scoring_fn(m_real_merged, b_real_merged)
+        
+        all_eval_real.append(eval_real)
+        all_scores_lagged_real.append(scores_lagged_real)
+        
+        # Handle generated sequences (multiple per real sequence)
+        if isinstance(m_gen, (tuple, list)):
+            for m_gen_i, b_gen_i in zip(m_gen, b_gen):
+                m_gen_merged, b_gen_merged, scores_lagged_gen = merge_with_lag(
+                    m_cond, b_cond, m_gen_i, b_gen_i, lag
+                )
+                eval_gen = scoring_fn(m_gen_merged, b_gen_merged)
+                
+                all_eval_gen.append(eval_gen)
+                all_scores_lagged_gen.append(scores_lagged_gen)
+        else:
+            m_gen_merged, b_gen_merged, scores_lagged_gen = merge_with_lag(
+                m_cond, b_cond, m_gen, b_gen, lag
+            )
+            eval_gen = scoring_fn(m_gen_merged, b_gen_merged)
+            
+            all_eval_gen.append(eval_gen)
+            all_scores_lagged_gen.append(scores_lagged_gen)
+    
+    # Flatten scores if nested (from multiple gen sequences)
+    scores_real_lagged = partitioning.flatten(all_scores_lagged_real)
+    scores_gen_lagged = partitioning.flatten(all_scores_lagged_gen)
+    eval_real = partitioning.flatten(all_eval_real)
+    eval_gen = partitioning.flatten(all_eval_gen)
+    
+    # Group by lagged conditioning metric
+    groups_real, groups_gen, thresholds = partitioning.group_by_score(
+        scores_real_lagged, scores_gen_lagged,
+        return_thresholds=True,
+        **score_lagged_kwargs
+    )
+    
+    # Create initial score table with lagged grouping
+    score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
+    
+    # Add lagged scores to table
+    score_df_lagged = partitioning.get_score_table(
+        scores_real_lagged, scores_gen_lagged, groups_real, groups_gen
+    )
+    
+    # Second grouping for each of the first groups (binning the evaluation scores within each lagged group)
+    score_df['subgroup'] = -1
+    score_df['score_lagged'] = score_df_lagged.score
+    sub_dfs = [df[1] for df in score_df.groupby('group')]
+    new_dfs = []
+    for df in sub_dfs:
+        real_scores = df.loc[df.type == 'real', 'score']
+        gen_scores = df.loc[df.type == 'generated', 'score']
+        groups_real, groups_gen = partitioning.group_by_score(
+            real_scores.values,
+            gen_scores.values,
+            **score_kwargs
+        )
+        df = df.copy()
+        df.loc[real_scores.index, 'subgroup'] = groups_real
+        df.loc[gen_scores.index, 'subgroup'] = groups_gen
+        new_dfs.append(df)
+    score_df = pd.concat(new_dfs)
+    
+    if return_plot_fn:
+        plot_fn = lambda var_eval, var_lagged, bins, binwidth: plotting.facet_grid_hist(
+            score_df,
+            var_eval=var_eval,
+            var_cond=var_lagged,
+            filter_groups_below_weight=0.01,
+            bins=bins,
+            binwidth=binwidth,
+        )
+        return score_df, plot_fn
+    else:
+        return score_df
+
+
 def score_data_context(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
