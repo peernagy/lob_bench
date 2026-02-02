@@ -152,134 +152,104 @@ def score_data_time_lagged(
     score_lagged_kwargs: dict = {},
 ):
     """
-    Time-lagged evaluation: evaluate metric at time t conditioned on metric at time t-lag.
+    Time-lagged conditional scoring: evaluate scoring_fn at time t conditioned on 
+    scoring_fn_lagged at time t-lag.
     
-    Merges conditional data (first lag messages) with real/gen data, allowing evaluation
-    of how metrics at time t depend on lagged metric values from time t-lag.
+    Sequences are merged as: conditional_data + real/generated_data.
+    The conditioning metric is computed on merged data and shifted by lag.
+    The evaluation metric is computed on merged data, with the first lag points dropped.
     
-    Returns DataFrame with columns [score, group, subgroup, score_lagged, type]
-    where:
-        - score: evaluation metric at time t (from scoring_fn)
-        - score_lagged: conditioning metric at time t-lag (from scoring_fn_lagged)
-        - group: bin assignment for score_lagged
-        - subgroup: bin assignment for score within each group
-        - type: 'real' or 'generated'
+    Grouping is done based on the lagged scoring_fn_lagged
+    and scores are based on the scoring_fn.
+    
+    Returns a dataframe with columns [score, group, subgroup, score_lagged, type]
+    similar to score_data_cond, where:
+    - 'group' is the bin of the lagged conditioning metric
+    - 'subgroup' is the bin of the evaluation metric within each lagged group
+    - 'score_lagged' is the value of the conditioning metric at t-lag
     """
-    # Helper function to merge conditional and main sequences
-    def merge_with_lag(m_cond, b_cond, m_main, b_main, lag):
-        """
-        Merge conditional sequence with main sequence and extract lagged values.
-        
-        After merge: cond_data (positions 0:lag) + main_data (positions lag:lag+len(main))
-        For each position t >= lag in merged data, the lagged value is at position t-lag.
-        We keep only positions lag:end in merged, so lagged values are from positions 0:len(merged)-lag.
-        
-        Returns:
-            m_merged, b_merged: main_data with first lag points dropped
-            scores_lagged: conditioning metric from merged data, shifted to align with main data
-        """
-        # Concatenate: conditional data followed by main data
-        m_merged = pd.concat([m_cond, m_main], ignore_index=True)
-        b_merged = pd.concat([b_cond, b_main], ignore_index=True)
-        
-        # Apply lagged scoring function to get full merged scores
-        scores_merged = scoring_fn_lagged(m_merged, b_merged)
-        
-        # Extract lagged scores: for position t in main (which is t+lag in merged),
-        # the lagged value is from position (t+lag)-lag = t in merged
-        # So we take scores_merged[0:len(main)] = scores_merged[0:len(m_merged)-lag]
-        if isinstance(scores_merged, np.ndarray):
-            scores_lagged = scores_merged[:len(scores_merged) - lag]
-        else:
-            scores_lagged = scores_merged.iloc[:len(scores_merged) - lag].values
-        
-        # Keep main data only (drop conditional prefix)
-        m_merged = m_merged.iloc[lag:].reset_index(drop=True)
-        b_merged = b_merged.iloc[lag:].reset_index(drop=True)
-        
-        return m_merged, b_merged, scores_lagged
     
-    # Collect scores from all sequences
-    all_eval_real = []
-    all_eval_gen = []
-    all_scores_lagged_real = []
-    all_scores_lagged_gen = []
-    
-    for seq in loader:
-        m_cond = seq.m_cond
-        b_cond = seq.b_cond
-        m_real = seq.m_real
-        b_real = seq.b_real
-        m_gen = seq.m_gen
-        b_gen = seq.b_gen
+    def merge_and_score_lagged(seqs, is_real=True):
+        """
+        Merge conditional + real/gen data, compute lagged conditioning scores.
+        Returns: (scores_lagged, scores_eval) both arrays
+        """
+        scores_lagged_list = []
+        scores_eval_list = []
         
-        # Merge conditional + real and apply lag
-        m_real_merged, b_real_merged, scores_lagged_real = merge_with_lag(
-            m_cond, b_cond, m_real, b_real, lag
-        )
-        
-        # Apply evaluation scoring function to merged real data
-        eval_real = scoring_fn(m_real_merged, b_real_merged)
-        
-        all_eval_real.append(eval_real)
-        all_scores_lagged_real.append(scores_lagged_real)
-        
-        # Handle generated sequences (multiple per real sequence)
-        if isinstance(m_gen, (tuple, list)):
-            for m_gen_i, b_gen_i in zip(m_gen, b_gen):
-                m_gen_merged, b_gen_merged, scores_lagged_gen = merge_with_lag(
-                    m_cond, b_cond, m_gen_i, b_gen_i, lag
-                )
-                eval_gen = scoring_fn(m_gen_merged, b_gen_merged)
-                
-                all_eval_gen.append(eval_gen)
-                all_scores_lagged_gen.append(scores_lagged_gen)
-        else:
-            m_gen_merged, b_gen_merged, scores_lagged_gen = merge_with_lag(
-                m_cond, b_cond, m_gen, b_gen, lag
-            )
-            eval_gen = scoring_fn(m_gen_merged, b_gen_merged)
+        for seq in seqs:
+            # Merge conditional + real or generated
+            if is_real:
+                m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=True)
+                b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=True)
+            else:
+                # For generated, process each generated sample
+                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+                    m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=True)
+                    b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=True)
+                    
+                    # Compute lagged conditioning metric
+                    score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
+                    # Shift by lag and drop first lag points
+                    score_lagged_shifted = score_lagged_full[lag:]
+                    
+                    # Compute evaluation metric (aligned with shifted conditioning)
+                    score_eval = scoring_fn(m_merged, b_merged)[lag:]
+                    
+                    scores_lagged_list.append(score_lagged_shifted)
+                    scores_eval_list.append(score_eval)
+                return scores_lagged_list, scores_eval_list
             
-            all_eval_gen.append(eval_gen)
-            all_scores_lagged_gen.append(scores_lagged_gen)
+            # Real branch (single realization)
+            # Compute lagged conditioning metric
+            score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
+            # Shift by lag and drop first lag points
+            score_lagged_shifted = score_lagged_full[lag:]
+            
+            # Compute evaluation metric (aligned with shifted conditioning)
+            score_eval = scoring_fn(m_merged, b_merged)[lag:]
+            
+            scores_lagged_list.append(score_lagged_shifted)
+            scores_eval_list.append(score_eval)
+        
+        # Concatenate all scores
+        scores_lagged = np.concatenate(scores_lagged_list) if scores_lagged_list else np.array([])
+        scores_eval = np.concatenate(scores_eval_list) if scores_eval_list else np.array([])
+        return scores_lagged, scores_eval
     
-    # Flatten scores if nested (from multiple gen sequences)
-    scores_real_lagged = partitioning.flatten(all_scores_lagged_real)
-    scores_gen_lagged = partitioning.flatten(all_scores_lagged_gen)
-    eval_real = partitioning.flatten(all_eval_real)
-    eval_gen = partitioning.flatten(all_eval_gen)
+    # Compute lagged conditioning scores and evaluation scores
+    scores_lagged_real, scores_eval_real = merge_and_score_lagged(loader, is_real=True)
+    scores_lagged_gen, scores_eval_gen = merge_and_score_lagged(loader, is_real=False)
     
-    # Group by lagged conditioning metric
+    # Stage 1: Bin based on lagged conditioning metric
     groups_real, groups_gen, thresholds = partitioning.group_by_score(
-        scores_real_lagged, scores_gen_lagged,
+        scores_lagged_real, scores_lagged_gen,
         return_thresholds=True,
         **score_lagged_kwargs
     )
     
-    # Create initial score table with lagged grouping
-    score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
+    # Create initial score table with lagged groups
+    score_df = partitioning.get_score_table(scores_eval_real, scores_eval_gen, groups_real, groups_gen)
     
-    # Add lagged scores to table
-    score_df_lagged = partitioning.get_score_table(
-        scores_real_lagged, scores_gen_lagged, groups_real, groups_gen
-    )
+    # Create table for lagged scores
+    score_df_lagged = partitioning.get_score_table(scores_lagged_real, scores_lagged_gen, groups_real, groups_gen)
     
-    # Second grouping for each of the first groups (binning the evaluation scores within each lagged group)
+    # Stage 2: For each lagged group, bin the evaluation scores
     score_df['subgroup'] = -1
-    score_df['score_lagged'] = score_df_lagged.score
+    score_df['score_cond'] = score_df_lagged.score
     sub_dfs = [df[1] for df in score_df.groupby('group')]
     new_dfs = []
     for df in sub_dfs:
         real_scores = df.loc[df.type == 'real', 'score']
         gen_scores = df.loc[df.type == 'generated', 'score']
-        groups_real, groups_gen = partitioning.group_by_score(
+        groups_real_sub, groups_gen_sub = partitioning.group_by_score(
             real_scores.values,
             gen_scores.values,
             **score_kwargs
         )
         df = df.copy()
-        df.loc[real_scores.index, 'subgroup'] = groups_real
-        df.loc[gen_scores.index, 'subgroup'] = groups_gen
+        df.loc[real_scores.index, 'subgroup'] = groups_real_sub
+        df.loc[gen_scores.index, 'subgroup'] = groups_gen_sub
         new_dfs.append(df)
     score_df = pd.concat(new_dfs)
     
@@ -444,6 +414,77 @@ def score_prediction_horizons(
     return score_dfs
 
 
+
+
+def compute_metrics_time_lagged(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    metric_fn: dict[str, Callable[[pd.DataFrame], float]],
+    scoring_fn_lagged: Callable[[pd.DataFrame, pd.DataFrame], float],
+    lag: int,
+    score_kwargs: dict = {},
+    score_lagged_kwargs: dict = {},
+) -> tuple[float, pd.DataFrame, Callable]:
+    """
+    Compute metrics for time-lagged conditional scoring.
+    
+    Args:
+        loader: Data loader
+        scoring_fn: Evaluation metric function
+        metric_fn: Dictionary of metric functions to apply
+        scoring_fn_lagged: Lagged conditioning metric function
+        lag: Time lag in message counts
+        score_kwargs: Kwargs for binning evaluation metric
+        score_lagged_kwargs: Kwargs for binning lagged conditioning metric
+        
+    Returns:
+        metric: Dictionary of metric values
+        score_df: DataFrame with scores and groupings
+        plot_fn: Plotting function
+    """
+    score_df, plot_fn = score_data_time_lagged(
+        loader, scoring_fn, scoring_fn_lagged, lag,
+        return_plot_fn=True, score_kwargs=score_kwargs,
+        score_lagged_kwargs=score_lagged_kwargs
+    )
+
+    # calc. loss for each of the conditional distributions
+    lens = []
+    losses = []
+    for name, group in score_df.groupby('group'):
+        lens.append(len(group))
+        # use the subgroup for binning now:
+        group.group = group.subgroup
+        losses.append(
+            np.stack(
+                tuple(mfn(group)[2] for mfn in metric_fn.values()),
+                axis=-1
+            )
+        )
+
+    # calculate weights by normalizing the number of observations
+    weights = np.array(lens, dtype=float)
+    weights /= weights.sum()
+    losses = np.array(losses).T
+
+    # sum over all groups
+    # shape: (num metrics, n_bootstrap + 1, num groups)
+    #     -> (num metrics, n_bootstrap + 1)
+    metric = np.nansum(losses * weights, axis=-1)
+
+    # get the percentiles of the bootstrapped loss values
+    ci_alpha = 0.01
+    q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+    # shape: (num metrics, n_bootstrap + 1)
+    ci = np.nanpercentile(metric, q, axis=-1).T
+    metric = {
+        m_name: (m[0], ci_, m) for m_name, ci_, m
+            in zip(metric_fn.keys(), ci, metric)
+    }
+
+    return metric, score_df, plot_fn
+
+
 def compute_metrics(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -578,6 +619,7 @@ def run_benchmark(
     default_metric: Callable[[pd.DataFrame], float],
     divergence: bool = False,
     contextual: bool = False,
+    time_lagged: bool = False,
     divergence_horizon: int = 50,
 ) -> tuple[
     dict[str, float],
@@ -592,8 +634,29 @@ def run_benchmark(
     for score_name, score_config in scoring_config_dict.items():
         print("Calculating scores and metrics for: ", score_name, end="\r\n")
 
+        # time-lagged scoring
+        if time_lagged:
+            score_cond_config = score_config["cond"]
+            score_config_eval = score_config["eval"]
+            lag = score_config.get("lag", 500)
+            score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
+            score_kwargs = get_kwargs(score_config_eval, conditional=True)
+            score_fn_cond = score_cond_config["fn"]
+            metric_fns = score_config_eval.get("metric_fns", default_metric)
+            
+            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
+                compute_metrics_time_lagged(
+                    loader,
+                    score_config_eval["fn"],
+                    metric_fns,
+                    score_fn_cond,
+                    lag,
+                    score_kwargs=score_kwargs,
+                    score_lagged_kwargs=score_cond_kwargs,
+                )
+
         # contextual scoring
-        if contextual:
+        elif contextual:
             score_context_fn = score_config.get("context_fn", None)
             score_context_config = score_config.get("context_config", {})
             score_context_kwargs = get_kwargs(score_context_config, conditional=True)

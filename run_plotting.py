@@ -80,6 +80,7 @@ def run_plotting(
     uncond_files = sorted(glob(score_dir + "/scores_uncond_*.pkl"))
     cond_files = sorted(glob(score_dir + "/scores_cond_*.pkl"))
     context_files = sorted(glob(score_dir + "/scores_context_*.pkl"))
+    time_lagged_files = sorted(glob(score_dir + "/scores_time_lagged_*.pkl"))
     div_files = sorted(glob(score_dir + "/scores_div_*.pkl"))
     if len(div_files) > 0:
         div_horizon_length = int(div_files[0].split("_")[-3])
@@ -92,6 +93,8 @@ def run_plotting(
         all_scores_cond, all_dfs_cond = _load_all_scores(cond_files)
     if len(context_files) > 0:
         all_scores_context, all_dfs_context = _load_all_scores(context_files)
+    if len(time_lagged_files) > 0:
+        all_scores_time_lagged, all_dfs_time_lagged = _load_all_scores(time_lagged_files)
     if len(div_files) > 0:
         all_scores_div, all_dfs_div = _load_all_scores(div_files)
 
@@ -228,6 +231,43 @@ def run_plotting(
                     )
                     plt.savefig(
                         f"{plot_dir}/hist_cond_{stock}_{model}_{var_eval}_{var_cond}.png",
+                        bbox_inches="tight", dpi=300
+                    )
+                    plt.close()
+
+    if len(time_lagged_files) > 0 and args.histograms > 0:
+        # TIME-LAGGED score histograms
+        print("[*] Plotting time-lagged histograms")
+        for stock, score_stock in tqdm(all_dfs_time_lagged.items(), position=0, desc="Stock"):
+            for model, score_model in tqdm(score_stock.items(), position=1, desc="Model", leave=False):
+                for score_name, score_df in score_model.items():
+                    # Backward compatibility: rename score_lagged to score_cond if present
+                    if 'score_lagged' in score_df.columns and 'score_cond' not in score_df.columns:
+                        score_df = score_df.rename(columns={'score_lagged': 'score_cond'})
+                    
+                    # Parse score name: "ask_volume | spread (t-lag=500)" -> var_eval, var_cond
+                    if " | " in score_name:
+                        var_eval, var_cond_full = score_name.split(" | ", 1)
+                        # Remove lag info from var_cond for cleaner display
+                        var_cond = var_cond_full.split(" (")[0] if " (" in var_cond_full else var_cond_full
+                    else:
+                        var_eval = score_name
+                        var_cond = "lagged"
+                    
+                    print(f"[*] Plotting {stock} {model} time-lagged histograms for {var_eval} | {var_cond}")
+                    binwidth = 100 if var_eval == "spread" else None
+                    plotting.facet_grid_hist(
+                        score_df,
+                        var_eval=var_eval,
+                        var_cond=var_cond,
+                        filter_groups_below_weight=0.01,
+                        bins='auto',
+                        binwidth=binwidth,
+                        stock=stock,
+                        model=model,
+                    )
+                    plt.savefig(
+                        f"{plot_dir}/hist_time_lagged_{stock}_{model}_{var_eval}_{var_cond}.png",
                         bbox_inches="tight", dpi=300
                     )
                     plt.close()

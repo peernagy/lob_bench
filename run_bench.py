@@ -148,6 +148,21 @@ DEFAULT_SCORING_CONFIG_COND = {
     }
 }
 
+
+######################## TIME-LAGGED SCORING ########################
+DEFAULT_SCORING_CONFIG_TIME_LAGGED = {
+    "ask_volume | spread (t-lag=500)": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.spread(m, b).values,
+            "discrete": True,
+        },
+        "lag": 500,
+    },
+}
+
 DEFAULT_SCORING_CONFIG_CONDEXT = {
     "ask_volume | spread": {
         "eval": {
@@ -175,27 +190,6 @@ DEFAULT_SCORING_CONFIG_CONTEXT = {
     #     "context_config": {
     #         "discrete": True,
     #     }
-    # },
-}
-
-
-######################## TIME-LAGGED SCORING ########################
-DEFAULT_SCORING_CONFIG_TIME_LAGGED = {
-    "ask_volume | spread (t-lag=500)": {
-        "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
-        "context_fn": lambda m, b: eval.spread(m, b).values,
-        "context_config": {
-            "discrete": True,
-        },
-        "lag": 500,
-    },
-    # "bid_volume_touch | spread (t-lag=500)": {
-    #     "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
-    #     "context_fn": lambda m, b: eval.spread(m, b).values,
-    #     "context_config": {
-    #         "discrete": True,
-    #     },
-    #     "lag": 500,
     # },
 }
 
@@ -278,7 +272,7 @@ def run_benchmark(
                     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
                     # Unconditional Scoring
-                    if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.div_only):
+                    if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running unconditional scoring")
                         scores, score_dfs, plot_fns = scoring.run_benchmark(
                             loader,
@@ -295,7 +289,7 @@ def run_benchmark(
                         print("... done")
 
                     # Conditional Scoring
-                    if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.div_only):
+                    if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running conditional scoring")
                         scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
                             loader,
@@ -332,51 +326,19 @@ def run_benchmark(
                     # Time-Lagged Scoring
                     if (args.run_all or args.time_lagged_only) and not (args.uncond_only or args.cond_only or args.context_only or args.div_only):
                         print("[*] Running time-lagged scoring:")
-                        for score_name, score_config in scoring_config_time_lagged.items():
-                            lag = score_config.get("lag")
-                            if lag is None:
-                                print(f"[!] Skipping {score_name}: no 'lag' parameter specified")
-                                continue
-                            
-                            print(f"[*]   Computing {score_name} with lag={lag}")
-                            score_df_lagged = scoring.score_data_time_lagged(
-                                loader,
-                                score_config["fn"],
-                                score_config["context_fn"],
-                                lag,
-                                score_kwargs=score_config.get("context_config", {}),
-                                score_lagged_kwargs=score_config.get("context_config", {}),
-                            )
-                            
-                            # Calculate metrics
-                            metrics_lagged = {}
-                            for m_name, mfn in metric_config.items():
-                                metrics_lagged[m_name] = {}
-                                regimes = sorted(score_df_lagged['group'].unique())
-                                
-                                for regime_id in regimes:
-                                    regime_df = score_df_lagged[score_df_lagged['group'] == regime_id].copy()
-                                    if len(regime_df) == 0:
-                                        continue
-                                    
-                                    result = mfn(regime_df)
-                                    if isinstance(result, tuple) and len(result) == 3:
-                                        point_est, _, bootstrapped = result
-                                    else:
-                                        point_est = result
-                                        bootstrapped = np.array([result])
-                                    
-                                    q = np.array([0.5, 99.5])
-                                    ci = np.percentile(bootstrapped, q)
-                                    metrics_lagged[m_name][regime_id] = (point_est, ci, bootstrapped)
-                            
-                            # Save results
-                            save_results(
-                                (metrics_lagged, score_df_lagged),
-                                score_df_lagged,
-                                args.save_dir+"/scores"
-                                + f"/scores_time_lagged_{score_name}_{stock}_{model_name}_{time_str}.pkl"
-                            )
+                        scores_time_lagged, score_dfs_time_lagged, plot_fns_time_lagged = scoring.run_benchmark(
+                            loader,
+                            scoring_config_time_lagged,
+                            default_metric=metric_config,
+                            time_lagged=True
+                        )
+                        print("[*] Saving time-lagged results...")
+                        save_results(
+                            scores_time_lagged,
+                            score_dfs_time_lagged,
+                            args.save_dir+"/scores"
+                            + f"/scores_time_lagged_{stock}_{model_name}_{time_str}.pkl"
+                        )
                         print("... done")
 
                     # Divergence Scoring
@@ -424,7 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--stock", nargs='+', default="GOOG")
     parser.add_argument("--time_period", nargs='+', default="2023_Jan")
     parser.add_argument("--model_version", nargs='+', default=None)
-    parser.add_argument("--data_dir", default="./data/data/evalsequences", type=str)
+    parser.add_argument("--data_dir", default="/homes/groups/finance/data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
     parser.add_argument("--model_name", nargs='+', default="s5_main")
     parser.add_argument("--uncond_only", action="store_true")
