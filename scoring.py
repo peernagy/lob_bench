@@ -172,61 +172,75 @@ def score_data_time_lagged(
     def merge_and_score_lagged(seqs, is_real=True):
         """
         Merge conditional + real/gen data, compute lagged conditioning scores.
-        Returns: (scores_lagged, scores_eval) both arrays
+        Returns: (scores_lagged, scores_eval) both as lists matching score_real_gen format
+        
+        The strategy is to:
+        1. Compute the lagged conditioning metric on merged (cond + real/gen) data
+        2. Compute the evaluation metric on the SAME merged data
+        3. Slice both by [lag:] to align them temporally
+        
+        This requires slicing the input data BEFORE passing to scoring functions
+        to ensure the messages and book dataframes stay aligned.
         """
-        def _validate_lag_length(seq_len: int, lag_val: int, context: str) -> None:
-            if seq_len <= lag_val:
-                raise ValueError(
-                    "Time-lagged scoring not possible: "
-                    f"sequence length {seq_len} is not greater than lag {lag_val} "
-                    f"({context})."
-                )
-
         scores_lagged_list = []
         scores_eval_list = []
+
+        def _align_and_slice(m_merged: pd.DataFrame, b_merged: pd.DataFrame):
+            min_len = min(len(m_merged), len(b_merged))
+            if min_len <= lag:
+                return None, None
+            m_trim = m_merged.iloc[:min_len].iloc[lag:]
+            b_trim = b_merged.iloc[:min_len].iloc[lag:]
+            return m_trim, b_trim
         
         for seq in seqs:
-            # Merge conditional + real or generated
             if is_real:
-                m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=True)
-                b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=True)
-            else:
-                # For generated, process each generated sample
-                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
-                    m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=True)
-                    b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=True)
+                # Merge conditional + real data
+                m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
+                b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
+                
+                # Align lengths, then slice off the first lag points
+                m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
 
-                    _validate_lag_length(len(m_merged), lag, "generated sequence")
+                if m_sliced is None:
+                    # Skip sequences that are too short
+                    continue
+                
+                # Compute metrics on sliced data
+                score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
+                score_eval_shifted = scoring_fn(m_sliced, b_sliced)
+                
+                scores_lagged_list.append(score_lagged_shifted)
+                scores_eval_list.append(score_eval_shifted)
+            else:
+                # For generated, collect scores for all samples of this sequence
+                scores_lagged_seq = []
+                scores_eval_seq = []
+                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+                    # Merge conditional + generated data
+                    m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
+                    b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
                     
-                    # Compute lagged conditioning metric
-                    score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
-                    # Shift by lag and drop first lag points
-                    score_lagged_shifted = score_lagged_full[lag:]
+                    # Align lengths, then slice off the first lag points
+                    m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+
+                    if m_sliced is None:
+                        # Skip samples that are too short
+                        continue
                     
-                    # Compute evaluation metric (aligned with shifted conditioning)
-                    score_eval = scoring_fn(m_merged, b_merged)[lag:]
+                    # Compute metrics on sliced data
+                    score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
+                    score_eval_shifted = scoring_fn(m_sliced, b_sliced)
                     
-                    scores_lagged_list.append(score_lagged_shifted)
-                    scores_eval_list.append(score_eval)
-                return scores_lagged_list, scores_eval_list
-            
-            # Real branch (single realization)
-            _validate_lag_length(len(m_merged), lag, "real sequence")
-            # Compute lagged conditioning metric
-            score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
-            # Shift by lag and drop first lag points
-            score_lagged_shifted = score_lagged_full[lag:]
-            
-            # Compute evaluation metric (aligned with shifted conditioning)
-            score_eval = scoring_fn(m_merged, b_merged)[lag:]
-            
-            scores_lagged_list.append(score_lagged_shifted)
-            scores_eval_list.append(score_eval)
+                    scores_lagged_seq.append(score_lagged_shifted)
+                    scores_eval_seq.append(score_eval_shifted)
+                
+                # Only append if we got at least one valid sample
+                if scores_lagged_seq:
+                    scores_lagged_list.append(tuple(scores_lagged_seq))
+                    scores_eval_list.append(tuple(scores_eval_seq))
         
-        # Concatenate all scores
-        scores_lagged = np.concatenate(scores_lagged_list) if scores_lagged_list else np.array([])
-        scores_eval = np.concatenate(scores_eval_list) if scores_eval_list else np.array([])
-        return scores_lagged, scores_eval
+        return scores_lagged_list, scores_eval_list
     
     # Compute lagged conditioning scores and evaluation scores
     scores_lagged_real, scores_eval_real = merge_and_score_lagged(loader, is_real=True)
