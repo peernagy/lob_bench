@@ -772,7 +772,9 @@ def summary_stats(
     # for each metric:
     values_list = list(scores.values())
     for i, metric_name in enumerate(values_list[0].keys()):
-        loss_vals = np.array([s[metric_name][0] for s in scores.values()])
+        # Extract bootstrap losses [2] instead of point estimates [0]
+        # to enable proper statistical variation computation
+        loss_vals = np.array([s[metric_name][2] for s in scores.values()])
 
         # loss_vals = np.array(
         #     [[score[2] for score in sdict.values()[0]] for sdict in scores.values()])
