@@ -326,20 +326,25 @@ def run_benchmark(
                     # Time-Lagged Scoring
                     if (args.run_all or args.time_lagged_only) and not (args.uncond_only or args.cond_only or args.context_only or args.div_only):
                         print("[*] Running time-lagged scoring:")
-                        scores_time_lagged, score_dfs_time_lagged, plot_fns_time_lagged = scoring.run_benchmark(
-                            loader,
-                            scoring_config_time_lagged,
-                            default_metric=metric_config,
-                            time_lagged=True
-                        )
-                        print("[*] Saving time-lagged results...")
-                        save_results(
-                            scores_time_lagged,
-                            score_dfs_time_lagged,
-                            args.save_dir+"/scores"
-                            + f"/scores_time_lagged_{stock}_{model_name}_{time_str}.pkl"
-                        )
-                        print("... done")
+                        try:
+                            scores_time_lagged, score_dfs_time_lagged, plot_fns_time_lagged = scoring.run_benchmark(
+                                loader,
+                                scoring_config_time_lagged,
+                                default_metric=metric_config,
+                                time_lagged=True
+                            )
+                            print("[*] Saving time-lagged results...")
+                            save_results(
+                                scores_time_lagged,
+                                score_dfs_time_lagged,
+                                args.save_dir+"/scores"
+                                + f"/scores_time_lagged_{stock}_{model_name}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except ValueError as exc:
+                            print(f"[!] Time-lagged scoring failed: {exc}")
+                            print("[!] Lagged scoring is not possible because the sequence is too short for the requested lag.")
+                            continue
 
                     # Divergence Scoring
                     if (args.run_all or args.div_only) and not (args.uncond_only or args.cond_only or args.context_only or args.time_lagged_only):

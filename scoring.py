@@ -174,6 +174,14 @@ def score_data_time_lagged(
         Merge conditional + real/gen data, compute lagged conditioning scores.
         Returns: (scores_lagged, scores_eval) both arrays
         """
+        def _validate_lag_length(seq_len: int, lag_val: int, context: str) -> None:
+            if seq_len <= lag_val:
+                raise ValueError(
+                    "Time-lagged scoring not possible: "
+                    f"sequence length {seq_len} is not greater than lag {lag_val} "
+                    f"({context})."
+                )
+
         scores_lagged_list = []
         scores_eval_list = []
         
@@ -187,6 +195,8 @@ def score_data_time_lagged(
                 for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
                     m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=True)
                     b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=True)
+
+                    _validate_lag_length(len(m_merged), lag, "generated sequence")
                     
                     # Compute lagged conditioning metric
                     score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
@@ -201,6 +211,7 @@ def score_data_time_lagged(
                 return scores_lagged_list, scores_eval_list
             
             # Real branch (single realization)
+            _validate_lag_length(len(m_merged), lag, "real sequence")
             # Compute lagged conditioning metric
             score_lagged_full = scoring_fn_lagged(m_merged, b_merged)
             # Shift by lag and drop first lag points
