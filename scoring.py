@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import warnings
 from typing import Callable, Iterable, List, Optional,Union
 from tqdm import tqdm
 import plotting
@@ -196,8 +197,10 @@ def score_data_time_lagged(
         for seq in seqs:
             if is_real:
                 # Merge conditional + real data
-                m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
-                b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", FutureWarning)
+                    m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
+                    b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
                 
                 # Align lengths, then slice off the first lag points
                 m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
@@ -218,8 +221,10 @@ def score_data_time_lagged(
                 scores_eval_seq = []
                 for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
                     # Merge conditional + generated data
-                    m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
-                    b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", FutureWarning)
+                        m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
+                        b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
                     
                     # Align lengths, then slice off the first lag points
                     m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
