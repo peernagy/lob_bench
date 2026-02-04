@@ -151,16 +151,66 @@ DEFAULT_SCORING_CONFIG_COND = {
 
 ######################## TIME-LAGGED SCORING ########################
 DEFAULT_SCORING_CONFIG_TIME_LAGGED = {
-    "ask_volume | spread (t-lag=500)": {
+    # "ask_volume | spread (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.spread(m, b).values,
+    #         "discrete": True,
+    #     },
+    #     "lag": 500,
+    # },
+    # "ask_volume | ofi (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    #         "discrete": False,
+    #     },
+    #     "lag": 500,
+    # },
+    # "bid_volume | ofi (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    #         "discrete": False,
+    #     },
+    #     "lag": 500,
+    # },
+    "ask_volume_touch | ofi (t-lag=500)": {
         "eval": {
             "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
         },
         "cond": {
-            "fn": lambda m, b: eval.spread(m, b).values,
-            "discrete": True,
+            "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+            "discrete": False,
         },
         "lag": 500,
     },
+    "bid_volume_touch | ofi (t-lag=500)": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+            "discrete": False,
+        },
+        "lag": 500,
+    },
+    # "orderbook_imbalance | spread (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.orderbook_imbalance(m, b).values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.spread(m, b).values,
+    #         "discrete": True,
+    #     },
+    #     "lag": 500,
+    # },
 }
 
 DEFAULT_SCORING_CONFIG_CONDEXT = {

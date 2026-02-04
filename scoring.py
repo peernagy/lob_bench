@@ -193,6 +193,18 @@ def score_data_time_lagged(
             m_trim = m_merged.iloc[:min_len].iloc[lag:]
             b_trim = b_merged.iloc[:min_len].iloc[lag:]
             return m_trim, b_trim
+
+        def _align_scores(score_lagged, score_eval):
+            if score_lagged is None or score_eval is None:
+                return None, None
+            score_lagged_arr = np.asarray(score_lagged)
+            score_eval_arr = np.asarray(score_eval)
+            if score_lagged_arr.ndim == 0 or score_eval_arr.ndim == 0:
+                return None, None
+            min_len = min(len(score_lagged_arr), len(score_eval_arr))
+            if min_len == 0:
+                return None, None
+            return score_lagged_arr[-min_len:], score_eval_arr[-min_len:]
         
         for seq in seqs:
             if is_real:
@@ -212,6 +224,12 @@ def score_data_time_lagged(
                 # Compute metrics on sliced data
                 score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
                 score_eval_shifted = scoring_fn(m_sliced, b_sliced)
+                score_lagged_shifted, score_eval_shifted = _align_scores(
+                    score_lagged_shifted, score_eval_shifted
+                )
+
+                if score_lagged_shifted is None:
+                    continue
                 
                 scores_lagged_list.append(score_lagged_shifted)
                 scores_eval_list.append(score_eval_shifted)
@@ -236,6 +254,12 @@ def score_data_time_lagged(
                     # Compute metrics on sliced data
                     score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
                     score_eval_shifted = scoring_fn(m_sliced, b_sliced)
+                    score_lagged_shifted, score_eval_shifted = _align_scores(
+                        score_lagged_shifted, score_eval_shifted
+                    )
+
+                    if score_lagged_shifted is None:
+                        continue
                     
                     scores_lagged_seq.append(score_lagged_shifted)
                     scores_eval_seq.append(score_eval_shifted)

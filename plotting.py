@@ -482,8 +482,20 @@ def summary_plot(
             for i_model, (model, summary_stats) in enumerate(summary_stats_models.items()):
                 if loss_metric in summary_stats:
                     scatter_vals = summary_stats[loss_metric]
-                    scatter_x = np.array([val[0] for val in scatter_vals])
-                    cis = np.array([val[1] for val in scatter_vals])
+                    def _reduce_stat(val):
+                        arr = np.asarray(val)
+                        if arr.ndim == 0:
+                            return arr
+                        return np.nanmean(arr)
+
+                    def _reduce_ci(ci):
+                        arr = np.asarray(ci)
+                        if arr.ndim == 1:
+                            return arr
+                        return np.nanmean(arr, axis=-1)
+
+                    scatter_x = np.array([_reduce_stat(val[0]) for val in scatter_vals])
+                    cis = np.array([_reduce_ci(val[1]) for val in scatter_vals])
                     ax = _get_ax(i_stat, i_stock)
                     if np.isnan(scatter_x).all():
                         continue
