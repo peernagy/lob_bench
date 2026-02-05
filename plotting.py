@@ -468,8 +468,8 @@ def summary_plot(
                 if stat_name not in stat_names:
                     stat_names.append(stat_name)
     n_stats = len(stat_names)
-    fig, axs = plt.subplots(n_stats * n_stocks, 1, figsize=(5, (2+(n_stocks+1)*n_stats)/2.5))
-    plt.subplots_adjust(hspace=0.6)  # Set some space for all
+    fig, axs = plt.subplots(n_stats * n_stocks, 1, figsize=(6, (3+(n_stocks+1)*n_stats)/2.0))
+    plt.subplots_adjust(hspace=1.0, top=0.95, bottom=0.08, left=0.15, right=0.95)  # Increased spacing for titles
 
     def _get_ax(i_stat, i_stock):
         return axs[i_stat * n_stocks + i_stock]
@@ -482,8 +482,20 @@ def summary_plot(
             for i_model, (model, summary_stats) in enumerate(summary_stats_models.items()):
                 if loss_metric in summary_stats:
                     scatter_vals = summary_stats[loss_metric]
-                    scatter_x = np.array([val[0] for val in scatter_vals])
-                    cis = np.array([val[1] for val in scatter_vals])
+                    def _reduce_stat(val):
+                        arr = np.asarray(val)
+                        if arr.ndim == 0:
+                            return arr
+                        return np.nanmean(arr)
+
+                    def _reduce_ci(ci):
+                        arr = np.asarray(ci)
+                        if arr.ndim == 1:
+                            return arr
+                        return np.nanmean(arr, axis=-1)
+
+                    scatter_x = np.array([_reduce_stat(val[0]) for val in scatter_vals])
+                    cis = np.array([_reduce_ci(val[1]) for val in scatter_vals])
                     ax = _get_ax(i_stat, i_stock)
                     if np.isnan(scatter_x).all():
                         continue
@@ -505,19 +517,13 @@ def summary_plot(
                     )
                     ax.set_ylim(-1, 3)
 
-                    # Add text to the left of the y-axis in the first subplot
-                    ax.text(
-                        -0.25, 0.5, stock, fontsize=12,
-                        ha='center', va='center',
-                        transform=ax.transAxes
-                    )
-
             # set xrange
             # plt.xlim(*xranges[i])
             _get_ax(i_stat, i_stock).set_title(
-                loss_metric.capitalize(),
+                f"{loss_metric.capitalize()} ({stock})",
                 fontweight='bold',
-                loc='left', #pad=-20,
+                loc='left',
+                pad=12,  # Add padding between title and plot area
             )
 
     # set x-axis limits
@@ -537,19 +543,9 @@ def summary_plot(
 
 
         for i_stock in range(1, n_stocks):
-            ax_ref = _get_ax(i_stat, i_stock-1)
             ax = _get_ax(i_stat, i_stock)
-
-            # remove x-axis labels for all but the last stock
+            # remove x-axis labels for all but the last stock  
             ax.set_xticklabels([])
-
-            # remove space between subplots for the same stat
-            ax.set_position([
-                ax.get_position().x0,
-                ax_ref.get_position().y0 + ax_ref.get_position().height,
-                ax.get_position().width,
-                ax.get_position().height
-            ])
 
     # Collect handles and labels for the combined legend
     handles, labels = [], []
