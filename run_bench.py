@@ -298,6 +298,16 @@ def run_benchmark(
     if args.model_version is None:
         args.model_version = [None]
 
+    errors: list[str] = []
+
+    def _record_failure(phase: str, stock: str, model_name: str, time_period: str, mv: Any, exc: Exception) -> None:
+        msg = (
+            f"[!] {phase} scoring failed for stock={stock}, model={model_name}, "
+            f"time_period={time_period}, model_version={mv}: {exc}"
+        )
+        print(msg)
+        errors.append(msg)
+
     for stock in args.stock:
         for model_name in args.model_name:
             for time_period in args.time_period:
@@ -324,54 +334,63 @@ def run_benchmark(
                     # Unconditional Scoring
                     if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running unconditional scoring")
-                        scores, score_dfs, plot_fns = scoring.run_benchmark(
-                            loader,
-                            scoring_config,
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores,
-                            score_dfs,
-                            args.save_dir+"/scores"
-                            + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
-                        )
-                        print("... done")
+                        try:
+                            scores, score_dfs, plot_fns = scoring.run_benchmark(
+                                loader,
+                                scoring_config,
+                                default_metric=metric_config
+                            )
+                            print("[*] Saving results...")
+                            save_results(
+                                scores,
+                                score_dfs,
+                                args.save_dir+"/scores"
+                                + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("unconditional", stock, model_name, time_period, mv, exc)
 
                     # Conditional Scoring
                     if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running conditional scoring")
-                        scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
-                            loader,
-                            scoring_config_cond,
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_cond,
-                            score_dfs_cond,
-                            args.save_dir+"/scores"
-                            + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
-                        )
-                        print("... done")
+                        try:
+                            scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
+                                loader,
+                                scoring_config_cond,
+                                default_metric=metric_config
+                            )
+                            print("[*] Saving results...")
+                            save_results(
+                                scores_cond,
+                                score_dfs_cond,
+                                args.save_dir+"/scores"
+                                + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("conditional", stock, model_name, time_period, mv, exc)
 
                     # Contextual Scoring
                     if (args.run_all or args.context_only) and not (args.uncond_only or args.cond_only or args.time_lagged_only or args.div_only):
                         print("[*] Running contextual scoring:")
-                        scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
-                            loader,
-                            scoring_config_context,
-                            default_metric=metric_config,
-                            contextual=True
-                        )
-                        print("[*] Saving contextual results...")
-                        save_results(
-                            scores_context,
-                            score_dfs_context,
-                            args.save_dir+"/scores"
-                            + f"/scores_context_{stock}_{model_name}_{time_str}.pkl"
-                        )
-                        print("... done")
+                        try:
+                            scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
+                                loader,
+                                scoring_config_context,
+                                default_metric=metric_config,
+                                contextual=True
+                            )
+                            print("[*] Saving contextual results...")
+                            save_results(
+                                scores_context,
+                                score_dfs_context,
+                                args.save_dir+"/scores"
+                                + f"/scores_context_{stock}_{model_name}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("contextual", stock, model_name, time_period, mv, exc)
 
                     # Time-Lagged Scoring
                     if (args.run_all or args.time_lagged_only) and not (args.uncond_only or args.cond_only or args.context_only or args.div_only):
@@ -394,45 +413,54 @@ def run_benchmark(
                         except ValueError as exc:
                             print(f"[!] Time-lagged scoring failed: {exc}")
                             print("[!] Lagged scoring is not possible because the sequence is too short for the requested lag.")
-                            continue
+                            _record_failure("time-lagged", stock, model_name, time_period, mv, exc)
+                        except Exception as exc:
+                            _record_failure("time-lagged", stock, model_name, time_period, mv, exc)
 
                     # Divergence Scoring
                     if (args.run_all or args.div_only) and not (args.uncond_only or args.cond_only or args.context_only or args.time_lagged_only):
                         print("[*] Running divergence scoring")
-                        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
-                            loader,
-                            scoring_config,
-                            default_metric=metric_config,
-                            divergence_horizon=args.divergence_horizon,
-                            divergence=True
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_,
-                            score_dfs_,
-                            args.save_dir+"/scores"
-                            + f"/scores_div_{stock}_{model_name}_"
-                            + f"{args.divergence_horizon}_{time_str}.pkl"
-                        )
-                        print("... done")
-
-                        if args.div_error_bounds:
-                            print("[*] Calculating divergence lower bounds...")
-                            baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
-                                score_dfs_,
-                                metric_config
+                        try:
+                            scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+                                loader,
+                                scoring_config,
+                                default_metric=metric_config,
+                                divergence_horizon=args.divergence_horizon,
+                                divergence=True
                             )
-                            print("[*] Saving baseline errors...")
+                            print("[*] Saving results...")
                             save_results(
-                                baseline_errors_by_score,
-                                None,
+                                scores_,
+                                score_dfs_,
                                 args.save_dir+"/scores"
-                                + f"/scores_div_{stock}_REAL_"
+                                + f"/scores_div_{stock}_{model_name}_"
                                 + f"{args.divergence_horizon}_{time_str}.pkl"
                             )
                             print("... done")
 
+                            if args.div_error_bounds:
+                                print("[*] Calculating divergence lower bounds...")
+                                baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+                                    score_dfs_,
+                                    metric_config
+                                )
+                                print("[*] Saving baseline errors...")
+                                save_results(
+                                    baseline_errors_by_score,
+                                    None,
+                                    args.save_dir+"/scores"
+                                    + f"/scores_div_{stock}_REAL_"
+                                    + f"{args.divergence_horizon}_{time_str}.pkl"
+                                )
+                                print("... done")
+                        except Exception as exc:
+                            _record_failure("divergence", stock, model_name, time_period, mv, exc)
+
                     print("[*] Done")
+
+    if errors:
+        error_list = "\n".join(errors)
+        raise RuntimeError(f"One or more scoring runs failed:\n{error_list}")
 
 
 
