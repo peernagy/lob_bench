@@ -33,3 +33,4 @@ sample_data/*
 data
 Miniconda3*
 *.pyc
+logs/*
