@@ -2,6 +2,7 @@
 """
 
 import itertools
+import warnings
 from typing import Callable, Iterable, Optional, Union
 import numpy as np
 import pandas as pd
@@ -123,13 +124,41 @@ def _split_by_time_interval(
 
 """ Scoring Functions """
 
+def _align_messages_book(
+        messages: Optional[pd.DataFrame],
+        book: Optional[pd.DataFrame],
+    ) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], bool]:
+    if messages is None or book is None:
+        return None, None, False
+    if len(messages) == len(book):
+        return messages, book, False
+    min_len = min(len(messages), len(book))
+    if min_len == 0:
+        return None, None, True
+    return messages.iloc[:min_len], book.iloc[:min_len], True
+
 def score_cond(
         seqs: Iterable[data_loading.Lobster_Sequence],
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     ):
     """
     """
-    scores = np.array([scoring_fn(seq.m_cond, seq.b_cond) for seq in seqs])
+    scores = []
+    warned_sequences = set()
+    for seq_idx, seq in enumerate(seqs):
+        messages, book, trimmed = _align_messages_book(seq.m_cond, seq.b_cond)
+        if trimmed and seq_idx not in warned_sequences:
+            warnings.warn(
+                "Conditional messages/book lengths differ; trimming to min length.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            warned_sequences.add(seq_idx)
+        if messages is None or book is None:
+            scores.append(np.nan)
+            continue
+        scores.append(scoring_fn(messages, book))
+    scores = np.array(scores)
     return scores
 
 def score_real_gen(
