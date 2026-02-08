@@ -49,6 +49,6 @@ fi
 
 # Run the benchmark / plotting
 echo "Starting plotting run at $(date)"
-PYTHONUNBUFFERED=1 python run_plotting.py --histograms
+PYTHONUNBUFFERED=1 python run_plotting.py --summary_only
 
 echo "Plotting completed at $(date)"

@@ -77,7 +77,9 @@ def wasserstein(
         return np.nan
 
     score_df = score_df.copy()
-    score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
+    score_std = score_df.score.std()
+    if np.isfinite(score_std) and score_std > 0:
+        score_df.score = (score_df.score - score_df.score.mean()) / score_std
 
     w = _wasserstein(score_df)
 
@@ -105,7 +107,9 @@ def ks_distance(
         return np.nan
 
     score_df = score_df.copy()
-    score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
+    score_std = score_df.score.std()
+    if np.isfinite(score_std) and score_std > 0:
+        score_df.score = (score_df.score - score_df.score.mean()) / score_std
 
     ks = _ks(score_df)
 
