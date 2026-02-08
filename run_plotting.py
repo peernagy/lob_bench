@@ -292,31 +292,35 @@ def run_plotting(
             return
 
         # COMPARISON PLOTS: bar plots and spider plots
-        print("[*] Plotting comparison plots")
-        # Create comparison subdirectory with timestamp
-        latest_timestamp = max([max(ts.values()) if ts else "unknown" for ts in all_timestamps_uncond.values()])
-        comparison_dir = f"{plot_dir}/comparison/{latest_timestamp}"
-        pathlib.Path(comparison_dir).mkdir(parents=True, exist_ok=True)
-        
-        # Bar plot of unconditional scores comparing all models
-        data = _scores_to_df(all_scores_uncond)
-        for stock in data.stock.unique():
-            for metric in data.metric.unique():
-                print(f"[*] Plotting {stock} {metric} bar plots")
-                plotting.loss_bars(
-                    data,
-                    stock,
-                    metric,
-                    save_path=f"{comparison_dir}/bar_{stock}_{metric}.png"
-                )
-                print(f"[*] Plotting {stock} {metric} spider plots")
-                plotting.spider_plot(
-                    all_scores_uncond[stock],
-                    metric,
-                    title=f"{metric.capitalize()} Loss ({stock})",
-                    plot_cis=False,
-                    save_path=f"{comparison_dir}/spider_{stock}_{metric}.png"
-                )
+        timestamps_uncond = [max(ts.values()) for ts in all_timestamps_uncond.values() if ts]
+        if not timestamps_uncond or not all_scores_uncond:
+            print("[*] No unconditional timestamps found; skipping comparison plots")
+        else:
+            print("[*] Plotting comparison plots")
+            # Create comparison subdirectory with timestamp
+            latest_timestamp = max(timestamps_uncond)
+            comparison_dir = f"{plot_dir}/comparison/{latest_timestamp}"
+            pathlib.Path(comparison_dir).mkdir(parents=True, exist_ok=True)
+            
+            # Bar plot of unconditional scores comparing all models
+            data = _scores_to_df(all_scores_uncond)
+            for stock in data.stock.unique():
+                for metric in data.metric.unique():
+                    print(f"[*] Plotting {stock} {metric} bar plots")
+                    plotting.loss_bars(
+                        data,
+                        stock,
+                        metric,
+                        save_path=f"{comparison_dir}/bar_{stock}_{metric}.png"
+                    )
+                    print(f"[*] Plotting {stock} {metric} spider plots")
+                    plotting.spider_plot(
+                        all_scores_uncond[stock],
+                        metric,
+                        title=f"{metric.capitalize()} Loss ({stock})",
+                        plot_cis=False,
+                        save_path=f"{comparison_dir}/spider_{stock}_{metric}.png"
+                    )
 
     if len(time_lagged_files) > 0:
         # COMPARISON PLOTS: bar plots and spider plots for time-lagged
@@ -426,7 +430,7 @@ def run_plotting(
                 )
                 plt.close()
     
-    if len(cond_files) & args.histograms > 0:
+    if len(cond_files) > 0 and args.histograms:
         # CONDITIONAL score histograms
         print("[*] Plotting conditional histograms")
         for stock, score_stock in tqdm(all_dfs_cond.items(), position=0, desc="Stock"):
@@ -501,13 +505,23 @@ def run_plotting(
                     
                     # Get unique regimes and plot each regime's distribution
                     regimes = sorted(score_df['group'].unique())
+                    max_regimes = 10
+                    if len(regimes) > max_regimes:
+                        regimes = regimes[:max_regimes]
+                        print(f"[*] Limiting to first {max_regimes} regimes for plotting")
                     n_regimes = len(regimes)
+
+                    n_cols = min(5, n_regimes)
+                    n_rows = int(np.ceil(n_regimes / n_cols))
+                    fig, axes = plt.subplots(
+                        n_rows,
+                        n_cols,
+                        figsize=(6 * n_cols, 4 * n_rows),
+                        squeeze=False,
+                    )
+                    axes_flat = axes.reshape(-1)
                     
-                    fig, axes = plt.subplots(1, n_regimes, figsize=(6*n_regimes, 5))
-                    if n_regimes == 1:
-                        axes = [axes]
-                    
-                    for ax, regime_id in zip(axes, regimes):
+                    for ax, regime_id in zip(axes_flat, regimes):
                         regime_data = score_df[score_df['group'] == regime_id]
                         
                         # Separate real and generated scores
@@ -529,6 +543,9 @@ def run_plotting(
                         ax.set_ylabel('Frequency')
                         ax.legend()
                         ax.grid(True, alpha=0.3)
+
+                    for ax in axes_flat[n_regimes:]:
+                        ax.set_visible(False)
                     
                     plt.suptitle(f'{stock} {model} - {score_name} (Contextual Regimes)', 
                                 fontsize=14)

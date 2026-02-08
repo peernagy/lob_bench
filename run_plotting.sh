@@ -31,4 +31,4 @@ chmod 700 $XDG_RUNTIME_DIR
 
 # 4. Run
 echo "Starting plot run..."
-python run_plotting.py --summary_only 
+python run_plotting.py
