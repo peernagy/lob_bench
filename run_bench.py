@@ -232,6 +232,7 @@ DEFAULT_SCORING_CONFIG_CONTEXT = {
         "context_fn": lambda m, b: eval.spread(m, b).values,
         "context_config": {
             "discrete": True,
+            "n_bins": 10,
         }
     },
     # "bid_volume_touch | spread": {
