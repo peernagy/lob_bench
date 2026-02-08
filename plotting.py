@@ -1,4 +1,6 @@
 from typing import Callable, Iterable, Optional, Any,Union
+import os
+import warnings
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
@@ -448,7 +450,15 @@ def spider_plot(
 
     # fig.write_image(f"images/spiderplt_{stock}_{metric_str}.png")
     if save_path is not None:
-        fig.write_image(save_path, scale=3,format='png')
+        try:
+            fig.write_image(save_path, scale=3, format='png')
+        except Exception as exc:
+            html_path = os.path.splitext(save_path)[0] + ".html"
+            warnings.warn(
+                "Plotly image export failed; saved HTML instead at: "
+                f"{html_path}. Error: {exc}"
+            )
+            fig.write_html(html_path)
     return fig
 
 

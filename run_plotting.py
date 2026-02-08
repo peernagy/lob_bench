@@ -4,6 +4,7 @@ import pandas as pd
 from glob import glob
 from tqdm import tqdm
 import argparse
+import math
 from datetime import datetime
 import pathlib
 import scoring
@@ -392,41 +393,77 @@ def run_plotting(
                     regimes = sorted(score_df['group'].unique())
                     n_regimes = len(regimes)
                     
-                    fig, axes = plt.subplots(1, n_regimes, figsize=(6*n_regimes, 5))
-                    if n_regimes == 1:
-                        axes = [axes]
-                    
-                    for ax, regime_id in zip(axes, regimes):
-                        regime_data = score_df[score_df['group'] == regime_id]
-                        
-                        # Separate real and generated scores
-                        real_scores = regime_data[regime_data['type'] == 'real']['score'].values
-                        gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
-                        
-                        # Compute histogram bins
-                        all_scores = np.concatenate([real_scores, gen_scores])
-                        bins = np.histogram_bin_edges(all_scores, bins=15)
-                        
-                        # Plot histograms
-                        ax.hist(real_scores, bins=bins, alpha=0.6, label='Real', 
-                               color='#1f77b4', edgecolor='black')
-                        ax.hist(gen_scores, bins=bins, alpha=0.6, label='Generated', 
-                               color='#ff7f0e', edgecolor='black')
-                        
-                        ax.set_title(f'Regime {regime_id}', fontsize=12)
-                        ax.set_xlabel('Score')
-                        ax.set_ylabel('Frequency')
-                        ax.legend()
-                        ax.grid(True, alpha=0.3)
-                    
-                    plt.suptitle(f'{stock} {model} - {score_name} (Contextual Regimes)', 
-                                fontsize=14)
-                    plt.tight_layout()
-                    plt.savefig(
-                        f"{plot_dir}/hist_context_{stock}_{model}_{score_name.replace(' | ', '_')}.png",
-                        bbox_inches="tight", dpi=300
-                    )
-                    plt.close()
+                    max_cols = 6
+                    max_rows = 4
+                    regimes_per_fig = max_cols * max_rows
+                    n_figs = math.ceil(n_regimes / regimes_per_fig)
+
+                    for fig_idx in range(n_figs):
+                        start = fig_idx * regimes_per_fig
+                        end = min(start + regimes_per_fig, n_regimes)
+                        regimes_chunk = regimes[start:end]
+
+                        n_chunk = len(regimes_chunk)
+                        n_cols = min(max_cols, n_chunk)
+                        n_rows = math.ceil(n_chunk / n_cols)
+                        fig, axes = plt.subplots(
+                            n_rows,
+                            n_cols,
+                            figsize=(4 * n_cols, 3 * n_rows),
+                            squeeze=False,
+                        )
+
+                        for ax in axes.flat:
+                            ax.set_visible(False)
+
+                        for ax, regime_id in zip(axes.flat, regimes_chunk):
+                            ax.set_visible(True)
+                            regime_data = score_df[score_df['group'] == regime_id]
+
+                            # Separate real and generated scores
+                            real_scores = regime_data[regime_data['type'] == 'real']['score'].values
+                            gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
+
+                            # Compute histogram bins
+                            all_scores = np.concatenate([real_scores, gen_scores])
+                            bins = np.histogram_bin_edges(all_scores, bins=15)
+
+                            # Plot histograms
+                            ax.hist(
+                                real_scores,
+                                bins=bins,
+                                alpha=0.6,
+                                label='Real',
+                                color='#1f77b4',
+                                edgecolor='black'
+                            )
+                            ax.hist(
+                                gen_scores,
+                                bins=bins,
+                                alpha=0.6,
+                                label='Generated',
+                                color='#ff7f0e',
+                                edgecolor='black'
+                            )
+
+                            ax.set_title(f'Regime {regime_id}', fontsize=12)
+                            ax.set_xlabel('Score')
+                            ax.set_ylabel('Frequency')
+                            ax.legend()
+                            ax.grid(True, alpha=0.3)
+
+                        fig.suptitle(
+                            f'{stock} {model} - {score_name} (Contextual Regimes)',
+                            fontsize=14
+                        )
+                        fig.tight_layout()
+                        page_suffix = f"_p{fig_idx + 1}" if n_figs > 1 else ""
+                        fig.savefig(
+                            f"{plot_dir}/hist_context_{stock}_{model}_{score_name.replace(' | ', '_')}{page_suffix}.png",
+                            bbox_inches="tight",
+                            dpi=300,
+                        )
+                        plt.close(fig)
 
     print("[*] Done")
 
