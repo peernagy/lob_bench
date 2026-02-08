@@ -1,3 +1,6 @@
+import os
+os.environ["PYPLOTLY_BROWSER"] = "none"
+
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,6 +18,7 @@ from run_bench import load_results
 import traceback
 import warnings
 import sys
+
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 
