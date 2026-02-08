@@ -33,13 +33,14 @@ pip install --upgrade pip setuptools wheel
 pip install -r requirements-fixed.txt
 
 # Run the benchmark
-echo "Starting benchmark run..."
-python run_bench.py \
+echo "Starting benchmark run at $(date)"
+PYTHONUNBUFFERED=1 python run_bench.py \
     --data_dir /lus/lfs1aip2/projects/s5e/public/quant_team/LOBS5/inference/logical-serenity-19_2168595 \
     --model_name . \
     --stock . \
     --time_period . \
     --save_dir ./results \
-    --all
+    --all \
+    --progress_interval 60
 
-echo "Benchmark completed."
+echo "Benchmark completed at $(date)"

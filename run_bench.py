@@ -299,6 +299,22 @@ def run_benchmark(
         args.model_version = [None]
 
     errors: list[str] = []
+    last_progress_time = time.time()
+
+    def _maybe_log_progress(phase: str, stock: str, model_name: str, time_period: str, mv: Any) -> None:
+        nonlocal last_progress_time
+        interval = getattr(args, "progress_interval", 0) or 0
+        if interval <= 0:
+            return
+        now = time.time()
+        if now - last_progress_time < interval:
+            return
+        elapsed = int(now - last_progress_time)
+        print(
+            f"[progress] {phase} | stock={stock} model={model_name} time_period={time_period} "
+            f"model_version={mv} (+{elapsed}s)"
+        )
+        last_progress_time = now
 
     def _record_failure(phase: str, stock: str, model_name: str, time_period: str, mv: Any, exc: Exception) -> None:
         msg = (
@@ -318,6 +334,7 @@ def run_benchmark(
                         stock_model_path = f"{args.data_dir}/{model_name}/{stock}/{time_period}"
 
                     print(f"[*] Loading generated data from {stock_model_path}")
+                    _maybe_log_progress("loading", stock, model_name, time_period, mv)
                     loader = data_loading.Simple_Loader(
                         stock_model_path  + "/data_real", 
                         stock_model_path  + "/data_gen", 
@@ -334,6 +351,7 @@ def run_benchmark(
                     # Unconditional Scoring
                     if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running unconditional scoring")
+                        _maybe_log_progress("unconditional", stock, model_name, time_period, mv)
                         try:
                             scores, score_dfs, plot_fns = scoring.run_benchmark(
                                 loader,
@@ -354,6 +372,7 @@ def run_benchmark(
                     # Conditional Scoring
                     if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.time_lagged_only or args.div_only):
                         print("[*] Running conditional scoring")
+                        _maybe_log_progress("conditional", stock, model_name, time_period, mv)
                         try:
                             scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
                                 loader,
@@ -374,6 +393,7 @@ def run_benchmark(
                     # Contextual Scoring
                     if (args.run_all or args.context_only) and not (args.uncond_only or args.cond_only or args.time_lagged_only or args.div_only):
                         print("[*] Running contextual scoring:")
+                        _maybe_log_progress("contextual", stock, model_name, time_period, mv)
                         try:
                             scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
                                 loader,
@@ -395,6 +415,7 @@ def run_benchmark(
                     # Time-Lagged Scoring
                     if (args.run_all or args.time_lagged_only) and not (args.uncond_only or args.cond_only or args.context_only or args.div_only):
                         print("[*] Running time-lagged scoring:")
+                        _maybe_log_progress("time-lagged", stock, model_name, time_period, mv)
                         try:
                             scores_time_lagged, score_dfs_time_lagged, plot_fns_time_lagged = scoring.run_benchmark(
                                 loader,
@@ -420,6 +441,7 @@ def run_benchmark(
                     # Divergence Scoring
                     if (args.run_all or args.div_only) and not (args.uncond_only or args.cond_only or args.context_only or args.time_lagged_only):
                         print("[*] Running divergence scoring")
+                        _maybe_log_progress("divergence", stock, model_name, time_period, mv)
                         try:
                             scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
                                 loader,
@@ -480,6 +502,7 @@ if __name__ == "__main__":
     parser.add_argument("--all", action="store_true", dest="run_all")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
+    parser.add_argument("--progress_interval", type=int, default=60)
     args = parser.parse_args()
 
     # Validate that --all is not combined with specific scoring flags
