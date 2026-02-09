@@ -448,7 +448,14 @@ def spider_plot(
 
     # fig.write_image(f"images/spiderplt_{stock}_{metric_str}.png")
     if save_path is not None:
-        fig.write_image(save_path, scale=3,format='png')
+        try:
+            fig.write_image(save_path, scale=3, format='png')
+        except Exception as exc:
+            # Fall back to HTML if Kaleido fails (common on headless HPC).
+            html_path = save_path.rsplit('.', 1)[0] + '.html'
+            fig.write_html(html_path, include_plotlyjs='cdn')
+            print(f"[warn] Failed to write image via Kaleido: {exc}")
+            print(f"[warn] Wrote interactive HTML instead: {html_path}")
     return fig
 
 
@@ -508,10 +515,14 @@ def summary_plot(
                         label=model,
                     )
                     # add errorbars
+                    ci_low = cis[:, 0]
+                    ci_high = cis[:, 1]
+                    xerr_low = np.maximum(scatter_x - ci_low, 0)
+                    xerr_high = np.maximum(ci_high - scatter_x, 0)
                     ax.errorbar(
-                        x=cis.mean(axis=1),
+                        x=scatter_x,
                         y=['mean', 'median', 'IQM'],
-                        xerr=np.diff(cis, axis=1).T[0],
+                        xerr=np.vstack([xerr_low, xerr_high]),
                         fmt='none',
                         color=f'C{i_model}',
                     )

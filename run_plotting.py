@@ -1,3 +1,6 @@
+import os
+os.environ["PYPLOTLY_BROWSER"] = "none"
+
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
@@ -16,6 +19,7 @@ import traceback
 import warnings
 import sys
 
+
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
 
     log = file if hasattr(file,'write') else sys.stderr
@@ -25,33 +29,47 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 warnings.showwarning = warn_with_traceback
 
 
+def _parse_score_filename(filename: str):
+    stem = filename.rsplit("/", 1)[-1].replace('.pkl', '')
+    parts = stem.split('_')
+    timestamp = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else "unknown"
+    core = parts[1:-2]  # drop leading "scores" and trailing timestamp
+    if not core:
+        return "unknown", "unknown", "unknown", timestamp
+
+    if len(core) >= 2 and core[0] == "time" and core[1] == "lagged":
+        score_type = "time_lagged"
+        idx = 2
+    else:
+        score_type = core[0]
+        idx = 1
+
+    stock = core[idx] if len(core) > idx else "unknown"
+    model_parts = core[idx + 1:] if len(core) > idx + 1 else []
+    model = "_".join(model_parts) if model_parts else "unknown"
+    if model and model[0].isdigit():
+        model = model[1:]
+
+    return score_type, stock, model, timestamp
+
+
 def _load_all_scores(files):
     all_scores = {}
     all_dfs = {}
     all_timestamps = {}
     for f in files:
-        # Parse filename: scores_{type}_{stock}_{model}_{date}_{time}.pkl
-        # Extract from right to handle multi-underscore model names
-        filename = f.rsplit("/", 1)[-1]
-        parts = filename.replace('.pkl', '').split('_')
+        score_type, stock, model, timestamp = _parse_score_filename(f)
         
-        # Extract timestamp (last 2 parts: date and time)
-        timestamp = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else "unknown"
-        
-        # Extract stock (3rd position from start)
-        stock = parts[2] if len(parts) > 2 else "unknown"
-        
-        # Extract model (everything between stock and timestamp)
-        # Format: scores_{type}_{stock}_{model_parts...}_{date}_{time}
-        model_parts = parts[3:-2] if len(parts) > 5 else [parts[3]] if len(parts) > 3 else ["unknown"]
-        model = "_".join(model_parts)
-        
-        # Remove sorting number at the beginning of the model name if present
-        if model and model[0].isdigit():
-            model = model[1:]
-        
-        print(f"  Loading: {filename}")
-        print(f"    Parsed as - Stock: {stock}, Model: {model}, Timestamp: {timestamp}")
+        print(f"  Loading: {f.rsplit('/', 1)[-1]}")
+        print(
+            "    Parsed as - Type: {score_type}, Stock: {stock}, Model: {model}, "
+            "Timestamp: {timestamp}".format(
+                score_type=score_type,
+                stock=stock,
+                model=model,
+                timestamp=timestamp,
+            )
+        )
         
         scores, scores_dfs = load_results(f)
         print(f"    Loaded {len(scores)} score metrics")
@@ -95,6 +113,89 @@ def _scores_to_df(scores):
     return pd.DataFrame(rows, columns=col_names)
 
 
+def _tag_scores(scores: dict, tag: str) -> dict:
+    return {f"{tag}:{name}": val for name, val in scores.items()}
+
+
+def _aggregate_context_metrics(metric_by_regime: dict, ci_alpha: float = 0.01) -> dict:
+    aggregated = {}
+    for metric_name, regimes in metric_by_regime.items():
+        bootstraps = []
+        for regime_val in regimes.values():
+            if not regime_val or len(regime_val) < 3:
+                continue
+            boot = np.asarray(regime_val[2]).ravel()
+            if boot.size:
+                bootstraps.append(boot)
+        if not bootstraps:
+            continue
+        flat = np.concatenate(bootstraps)
+        q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+        ci = np.percentile(flat, q)
+        aggregated[metric_name] = (np.nanmean(flat), ci, flat)
+    return aggregated
+
+
+def _aggregate_divergence_scores(score_list: list, ci_alpha: float = 0.01) -> dict:
+    bootstraps = []
+    for score_val in score_list:
+        if not score_val or len(score_val) < 3:
+            continue
+        boot = np.asarray(score_val[2]).ravel()
+        if boot.size:
+            bootstraps.append(boot)
+    if not bootstraps:
+        return {}
+    flat = np.concatenate(bootstraps)
+    q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+    ci = np.percentile(flat, q)
+    return {"divergence": (np.nanmean(flat), ci, flat)}
+
+
+def _summary_stats_flexible(
+    scores,
+    bootstrap: bool = True,
+    ci_alpha: float = 0.01,
+    n_bootstrap: int = 1000,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+):
+    return_dict = {}
+    metric_names = sorted({m for s in scores.values() for m in s.keys()})
+    for metric_name in metric_names:
+        metric_scores = [s[metric_name] for s in scores.values() if metric_name in s]
+        if not metric_scores:
+            continue
+        bootstraps = [np.asarray(s[2]).ravel() for s in metric_scores]
+        min_len = min((b.size for b in bootstraps if b.size > 0), default=0)
+        if min_len == 0:
+            continue
+        loss_vals = np.array([
+            rng_np.choice(b, size=min_len, replace=b.size < min_len)
+            for b in bootstraps
+        ])
+        aggr_mean, aggr_median, aggr_iqm = scoring._calc_summary_stats(loss_vals)
+
+        if bootstrap:
+            losses_bootstrap = np.array([
+                [rng_np.choice(b) for b in bootstraps]
+                for _ in range(n_bootstrap)
+            ])
+            bs_mean, bs_median, bs_iqm = scoring._calc_summary_stats(losses_bootstrap)
+            q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+            ci_mean = np.percentile(bs_mean, q)
+            ci_median = np.percentile(bs_median, q)
+            ci_iqm = np.percentile(bs_iqm, q)
+            return_dict[metric_name] = (
+                (aggr_mean, ci_mean),
+                (aggr_median, ci_median),
+                (aggr_iqm, ci_iqm),
+            )
+        else:
+            return_dict[metric_name] = aggr_mean, aggr_median, aggr_iqm
+
+    return return_dict
+
+
 def run_plotting(
     args,
     score_dir: str,
@@ -112,7 +213,16 @@ def run_plotting(
         div_horizon_length = int(div_files[0].split("_")[-3])
 
     # load all scores
+    all_scores_uncond = {}
     all_scores_cond = {}
+    all_scores_context = {}
+    all_scores_time_lagged = {}
+    all_scores_div = {}
+    all_dfs_uncond = {}
+    all_dfs_cond = {}
+    all_dfs_context = {}
+    all_dfs_time_lagged = {}
+    all_dfs_div = {}
     all_timestamps_uncond = {}
     all_timestamps_time_lagged = {}
     
@@ -127,87 +237,92 @@ def run_plotting(
     if len(div_files) > 0:
         all_scores_div, all_dfs_div, _ = _load_all_scores(div_files)
 
-    if len(uncond_files) > 0:
-        # SUMMARY PLOTS
-        print("[*] Plotting summary stats")
-        summary_stats = {
-            stock: {
-                model: scoring.summary_stats(
-                    scores | all_scores_cond.get(stock, {}).get(model, {}),
-                    bootstrap=True
-                )
-                for model, scores in all_scores_uncond[stock].items()
-            } for stock in all_scores_uncond
-        }
-        print(summary_stats)
+    # Combined summary plots across all score types
+    combined_scores = {}
+    for stock, score_stock in all_scores_uncond.items():
+        for model, score_model in score_stock.items():
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(
+                _tag_scores(score_model, "uncond")
+            )
+    for stock, score_stock in all_scores_cond.items():
+        for model, score_model in score_stock.items():
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(
+                _tag_scores(score_model, "cond")
+            )
+    for stock, score_stock in all_scores_time_lagged.items():
+        for model, score_model in score_stock.items():
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(
+                _tag_scores(score_model, "time_lagged")
+            )
+    for stock, score_stock in all_scores_context.items():
+        for model, score_model in score_stock.items():
+            context_scores = {}
+            for score_name, metric_by_regime in score_model.items():
+                aggregated = _aggregate_context_metrics(metric_by_regime)
+                if aggregated:
+                    context_scores[f"context:{score_name}"] = aggregated
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(context_scores)
+    for stock, score_stock in all_scores_div.items():
+        for model, score_model in score_stock.items():
+            if model.upper() == "REAL":
+                continue
+            div_scores = {}
+            for score_name, score_list in score_model.items():
+                aggregated = _aggregate_divergence_scores(score_list)
+                if aggregated:
+                    div_scores[f"div:{score_name}"] = aggregated
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(div_scores)
 
+    if combined_scores:
+        print("[*] Plotting combined summary stats")
+        summary_stats_all = {
+            stock: {
+                model: _summary_stats_flexible(scores, bootstrap=True)
+                for model, scores in combined_scores[stock].items()
+            } for stock in combined_scores
+        }
+        print(summary_stats_all)
         plotting.summary_plot(
-            summary_stats,
-            save_path=f"{plot_dir}/summary_stats_comp.png"
+            summary_stats_all,
+            save_path=f"{plot_dir}/summary_stats_all.png"
         )
+
+        if args.summary_only:
+            print("[*] Summary-only mode enabled; skipping remaining plots")
+            return
 
         # COMPARISON PLOTS: bar plots and spider plots
-        print("[*] Plotting comparison plots")
-        # Create comparison subdirectory with timestamp
-        latest_timestamp = max([max(ts.values()) if ts else "unknown" for ts in all_timestamps_uncond.values()])
-        comparison_dir = f"{plot_dir}/comparison/{latest_timestamp}"
-        pathlib.Path(comparison_dir).mkdir(parents=True, exist_ok=True)
-        
-        # Bar plot of unconditional scores comparing all models
-        data = _scores_to_df(all_scores_uncond)
-        for stock in data.stock.unique():
-            for metric in data.metric.unique():
-                print(f"[*] Plotting {stock} {metric} bar plots")
-                plotting.loss_bars(
-                    data,
-                    stock,
-                    metric,
-                    save_path=f"{comparison_dir}/bar_{stock}_{metric}.png"
-                )
-                print(f"[*] Plotting {stock} {metric} spider plots")
-                plotting.spider_plot(
-                    all_scores_uncond[stock],
-                    metric,
-                    title=f"{metric.capitalize()} Loss ({stock})",
-                    plot_cis=False,
-                    save_path=f"{comparison_dir}/spider_{stock}_{metric}.png"
-                )
+        timestamps_uncond = [max(ts.values()) for ts in all_timestamps_uncond.values() if ts]
+        if not timestamps_uncond or not all_scores_uncond:
+            print("[*] No unconditional timestamps found; skipping comparison plots")
+        else:
+            print("[*] Plotting comparison plots")
+            # Create comparison subdirectory with timestamp
+            latest_timestamp = max(timestamps_uncond)
+            comparison_dir = f"{plot_dir}/comparison/{latest_timestamp}"
+            pathlib.Path(comparison_dir).mkdir(parents=True, exist_ok=True)
+            
+            # Bar plot of unconditional scores comparing all models
+            data = _scores_to_df(all_scores_uncond)
+            for stock in data.stock.unique():
+                for metric in data.metric.unique():
+                    print(f"[*] Plotting {stock} {metric} bar plots")
+                    plotting.loss_bars(
+                        data,
+                        stock,
+                        metric,
+                        save_path=f"{comparison_dir}/bar_{stock}_{metric}.png"
+                    )
+                    print(f"[*] Plotting {stock} {metric} spider plots")
+                    plotting.spider_plot(
+                        all_scores_uncond[stock],
+                        metric,
+                        title=f"{metric.capitalize()} Loss ({stock})",
+                        plot_cis=False,
+                        save_path=f"{comparison_dir}/spider_{stock}_{metric}.png"
+                    )
 
     if len(time_lagged_files) > 0:
-        # TIME-LAGGED SUMMARY PLOTS
-        print("[*] Plotting time-lagged summary stats")
-        print(f"[*] Found {len(time_lagged_files)} time-lagged score files")
-        
-        # Debug: Print what was loaded
-        for stock in all_scores_time_lagged:
-            for model in all_scores_time_lagged[stock]:
-                n_scores = len(all_scores_time_lagged[stock][model])
-                print(f"    Loaded: {stock} {model} with {n_scores} metrics")
-        
-        summary_stats_time_lagged = {}
-        for stock in all_scores_time_lagged:
-            summary_stats_time_lagged[stock] = {}
-            for model in all_scores_time_lagged[stock].keys():
-                # Skip models with no valid time-lagged scores
-                if not all_scores_time_lagged[stock][model]:
-                    print(f"    Warning: {stock} {model} has no metrics")
-                    continue
-                stats = scoring.summary_stats(
-                    all_scores_time_lagged[stock][model],
-                    bootstrap=True
-                )
-                # Only include if we got valid stats
-                if stats:
-                    summary_stats_time_lagged[stock][model] = stats
-                else:
-                    print(f"    Warning: {stock} {model} returned empty stats")
-        print(summary_stats_time_lagged)
-
-        plotting.summary_plot(
-            summary_stats_time_lagged,
-            save_path=f"{plot_dir}/summary_stats_time_lagged.png"
-        )
-
         # COMPARISON PLOTS: bar plots and spider plots for time-lagged
         print("[*] Plotting time-lagged comparison plots")
         # Create comparison subdirectory with timestamp
@@ -315,7 +430,7 @@ def run_plotting(
                 )
                 plt.close()
     
-    if len(cond_files) & args.histograms > 0:
+    if len(cond_files) > 0 and args.histograms:
         # CONDITIONAL score histograms
         print("[*] Plotting conditional histograms")
         for stock, score_stock in tqdm(all_dfs_cond.items(), position=0, desc="Stock"):
@@ -390,13 +505,23 @@ def run_plotting(
                     
                     # Get unique regimes and plot each regime's distribution
                     regimes = sorted(score_df['group'].unique())
+                    max_regimes = 10
+                    if len(regimes) > max_regimes:
+                        regimes = regimes[:max_regimes]
+                        print(f"[*] Limiting to first {max_regimes} regimes for plotting")
                     n_regimes = len(regimes)
+
+                    n_cols = min(5, n_regimes)
+                    n_rows = int(np.ceil(n_regimes / n_cols))
+                    fig, axes = plt.subplots(
+                        n_rows,
+                        n_cols,
+                        figsize=(6 * n_cols, 4 * n_rows),
+                        squeeze=False,
+                    )
+                    axes_flat = axes.reshape(-1)
                     
-                    fig, axes = plt.subplots(1, n_regimes, figsize=(6*n_regimes, 5))
-                    if n_regimes == 1:
-                        axes = [axes]
-                    
-                    for ax, regime_id in zip(axes, regimes):
+                    for ax, regime_id in zip(axes_flat, regimes):
                         regime_data = score_df[score_df['group'] == regime_id]
                         
                         # Separate real and generated scores
@@ -418,6 +543,9 @@ def run_plotting(
                         ax.set_ylabel('Frequency')
                         ax.legend()
                         ax.grid(True, alpha=0.3)
+
+                    for ax in axes_flat[n_regimes:]:
+                        ax.set_visible(False)
                     
                     plt.suptitle(f'{stock} {model} - {score_name} (Contextual Regimes)', 
                                 fontsize=14)
@@ -438,6 +566,8 @@ if __name__ == "__main__":
     parser.add_argument("--plot_dir", default="./results/plots", type=str)
     parser.add_argument("--show_plots", action="store_true")
     parser.add_argument("--model_name",default="large_model_sample",type=str)
+    parser.add_argument("--summary_only", action="store_true", default=False,
+                        help="Only generate summary plots and skip other plots")
     parser.add_argument("--histograms", action="store_true", default=False,
                         help="Plot histograms of scores")
     args = parser.parse_args()

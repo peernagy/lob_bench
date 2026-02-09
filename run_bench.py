@@ -232,6 +232,7 @@ DEFAULT_SCORING_CONFIG_CONTEXT = {
         "context_fn": lambda m, b: eval.spread(m, b).values,
         "context_config": {
             "discrete": True,
+            "n_bins": 10,
         }
     },
     # "bid_volume_touch | spread": {
@@ -353,6 +354,7 @@ def run_benchmark(
                         print("[*] Running unconditional scoring")
                         _maybe_log_progress("unconditional", stock, model_name, time_period, mv)
                         try:
+                            mv_suffix = f"_{mv}" if mv is not None else ""
                             scores, score_dfs, plot_fns = scoring.run_benchmark(
                                 loader,
                                 scoring_config,
@@ -363,7 +365,7 @@ def run_benchmark(
                                 scores,
                                 score_dfs,
                                 args.save_dir+"/scores"
-                                + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
+                                + f"/scores_uncond_{stock}_{model_name}{mv_suffix}_{time_str}.pkl"
                             )
                             print("... done")
                         except Exception as exc:
