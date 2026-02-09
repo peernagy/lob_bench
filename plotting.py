@@ -515,10 +515,14 @@ def summary_plot(
                         label=model,
                     )
                     # add errorbars
+                    ci_low = cis[:, 0]
+                    ci_high = cis[:, 1]
+                    xerr_low = np.maximum(scatter_x - ci_low, 0)
+                    xerr_high = np.maximum(ci_high - scatter_x, 0)
                     ax.errorbar(
-                        x=cis.mean(axis=1),
+                        x=scatter_x,
                         y=['mean', 'median', 'IQM'],
-                        xerr=np.diff(cis, axis=1).T[0],
+                        xerr=np.vstack([xerr_low, xerr_high]),
                         fmt='none',
                         color=f'C{i_model}',
                     )
