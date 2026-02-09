@@ -35,30 +35,16 @@ def _load_all_scores(files):
         # Extract from right to handle multi-underscore model names
         filename = f.rsplit("/", 1)[-1]
         parts = filename.replace('.pkl', '').split('_')
-
-        # Handle multi-token score type like "time_lagged"
-        if len(parts) > 2 and parts[1] == "time" and parts[2] == "lagged":
-            type_parts_len = 2
-            stock_idx = 3
-        else:
-            type_parts_len = 1
-            stock_idx = 2
         
         # Extract timestamp (last 2 parts: date and time)
         timestamp = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else "unknown"
         
-        # Extract stock (position depends on score type)
-        stock = parts[stock_idx] if len(parts) > stock_idx else "unknown"
+        # Extract stock (3rd position from start)
+        stock = parts[2] if len(parts) > 2 else "unknown"
         
         # Extract model (everything between stock and timestamp)
         # Format: scores_{type}_{stock}_{model_parts...}_{date}_{time}
-        model_start = stock_idx + 1
-        if len(parts) > model_start + 2:
-            model_parts = parts[model_start:-2]
-        elif len(parts) > model_start:
-            model_parts = [parts[model_start]]
-        else:
-            model_parts = ["unknown"]
+        model_parts = parts[3:-2] if len(parts) > 5 else [parts[3]] if len(parts) > 3 else ["unknown"]
         model = "_".join(model_parts)
         
         # Remove sorting number at the beginning of the model name if present
@@ -110,19 +96,6 @@ def _scores_to_df(scores):
     return pd.DataFrame(rows, columns=col_names)
 
 
-def _merge_scores(base, extra):
-    if not extra:
-        return base
-    for stock, models in extra.items():
-        if stock not in base:
-            base[stock] = {}
-        for model, scores in models.items():
-            if model not in base[stock]:
-                base[stock][model] = {}
-            base[stock][model].update(scores)
-    return base
-
-
 def run_plotting(
     args,
     score_dir: str,
@@ -155,27 +128,24 @@ def run_plotting(
     if len(div_files) > 0:
         all_scores_div, all_dfs_div, _ = _load_all_scores(div_files)
 
-    # SUMMARY PLOTS (combined across uncond/cond/time-lagged)
-    summary_stats = {}
-    if len(uncond_files) > 0 or len(time_lagged_files) > 0:
+    if len(uncond_files) > 0:
+        # SUMMARY PLOTS
         print("[*] Plotting summary stats")
-        all_scores_combined = {}
-        if len(uncond_files) > 0:
-            all_scores_combined = _merge_scores(all_scores_combined, all_scores_uncond)
-            all_scores_combined = _merge_scores(all_scores_combined, all_scores_cond)
-        if len(time_lagged_files) > 0:
-            all_scores_combined = _merge_scores(all_scores_combined, all_scores_time_lagged)
-
         summary_stats = {
             stock: {
                 model: scoring.summary_stats(
-                    scores,
+                    scores | all_scores_cond.get(stock, {}).get(model, {}),
                     bootstrap=True
                 )
-                for model, scores in all_scores_combined[stock].items()
-            } for stock in all_scores_combined
+                for model, scores in all_scores_uncond[stock].items()
+            } for stock in all_scores_uncond
         }
         print(summary_stats)
+
+        plotting.summary_plot(
+            summary_stats,
+            save_path=f"{plot_dir}/summary_stats_comp.png"
+        )
 
         # COMPARISON PLOTS: bar plots and spider plots
         print("[*] Plotting comparison plots")
@@ -205,34 +175,40 @@ def run_plotting(
                 )
 
     if len(time_lagged_files) > 0:
+        # TIME-LAGGED SUMMARY PLOTS
+        print("[*] Plotting time-lagged summary stats")
         print(f"[*] Found {len(time_lagged_files)} time-lagged score files")
+        
+        # Debug: Print what was loaded
         for stock in all_scores_time_lagged:
             for model in all_scores_time_lagged[stock]:
                 n_scores = len(all_scores_time_lagged[stock][model])
                 print(f"    Loaded: {stock} {model} with {n_scores} metrics")
-
-    if summary_stats:
-        # Remove older split-summary outputs to avoid confusion
-        old_summary_paths = [
-            pathlib.Path(plot_dir) / "summary_stats_comp.png",
-            pathlib.Path(plot_dir) / "summary_stats_time_lagged.png",
-        ]
-        for path in old_summary_paths:
-            if path.exists():
-                path.unlink()
+        
+        summary_stats_time_lagged = {}
+        for stock in all_scores_time_lagged:
+            summary_stats_time_lagged[stock] = {}
+            for model in all_scores_time_lagged[stock].keys():
+                # Skip models with no valid time-lagged scores
+                if not all_scores_time_lagged[stock][model]:
+                    print(f"    Warning: {stock} {model} has no metrics")
+                    continue
+                stats = scoring.summary_stats(
+                    all_scores_time_lagged[stock][model],
+                    bootstrap=True
+                )
+                # Only include if we got valid stats
+                if stats:
+                    summary_stats_time_lagged[stock][model] = stats
+                else:
+                    print(f"    Warning: {stock} {model} returned empty stats")
+        print(summary_stats_time_lagged)
 
         plotting.summary_plot(
-            summary_stats,
-            save_path=f"{plot_dir}/summary_stats.png"
+            summary_stats_time_lagged,
+            save_path=f"{plot_dir}/summary_stats_time_lagged.png"
         )
-    else:
-        print("[*] No summary stats available to plot")
 
-    if args.summary_only:
-        print("[*] Summary-only mode enabled; skipping other plots")
-        return
-
-    if len(time_lagged_files) > 0:
         # COMPARISON PLOTS: bar plots and spider plots for time-lagged
         print("[*] Plotting time-lagged comparison plots")
         # Create comparison subdirectory with timestamp
@@ -501,12 +477,6 @@ if __name__ == "__main__":
     parser.add_argument("--model_name",default="large_model_sample",type=str)
     parser.add_argument("--histograms", action="store_true", default=False,
                         help="Plot histograms of scores")
-    parser.add_argument(
-        "--summary_only",
-        action="store_true",
-        default=False,
-        help="Plot only summary stats and skip all other plots",
-    )
     args = parser.parse_args()
 
     run_plotting(args,args.score_dir, args.plot_dir,args.model_name)

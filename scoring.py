@@ -796,9 +796,13 @@ def summary_stats(
     # for each metric:
     values_list = list(scores.values())
     for i, metric_name in enumerate(values_list[0].keys()):
-        # Aggregate summary stats across scores using point estimates
-        point_vals = np.array([s[metric_name][0] for s in scores.values()], dtype=float)
-        aggr_mean, aggr_median, aggr_iqm = _calc_summary_stats(point_vals)
+        # Extract bootstrap losses [2] instead of point estimates [0]
+        # to enable proper statistical variation computation
+        loss_vals = np.array([s[metric_name][2] for s in scores.values()])
+
+        # loss_vals = np.array(
+        #     [[score[2] for score in sdict.values()[0]] for sdict in scores.values()])
+        aggr_mean, aggr_median, aggr_iqm = _calc_summary_stats(loss_vals)
         # print(aggr_mean, aggr_median, aggr_iqm)
 
         if bootstrap:
