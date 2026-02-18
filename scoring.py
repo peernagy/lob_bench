@@ -326,6 +326,7 @@ def score_data_context(
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
     *,
+    return_plot_fn: bool = False,
     score_context_kwargs: dict = {},
 ):
     """
@@ -338,6 +339,7 @@ def score_data_context(
     Returns:
         score_df: DataFrame with columns [score, group, type]
         where 'group' is the regime ID from conditional data
+        plot_fn: (optional) Plotting function if return_plot_fn=True
     """
     # Step 1: Define regimes from CONDITIONAL data
     scores_cond = partitioning.score_cond(loader, scoring_fn_context)
@@ -358,7 +360,22 @@ def score_data_context(
     eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
     score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
     
-    return score_df
+    # Add the context scores (regime identifiers) to the dataframe for plotting
+    score_df_context = partitioning.get_score_table(scores_real, scores_gen, groups_real, groups_gen)
+    score_df['score_cond'] = score_df_context.score
+    
+    if return_plot_fn:
+        plot_fn = lambda var_eval, var_context, bins, binwidth: plotting.facet_grid_hist(
+            score_df,
+            var_eval=var_eval,
+            var_cond=var_context,
+            filter_groups_below_weight=0.01,
+            bins=bins,
+            binwidth=binwidth,
+        )
+        return score_df, plot_fn
+    else:
+        return score_df
 
 
 def compute_metrics_context(
@@ -368,52 +385,54 @@ def compute_metrics_context(
     scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
     score_context_kwargs: dict = {},
     ci_alpha: float = 0.01,
-) -> tuple[dict, pd.DataFrame]:
+) -> tuple[dict, pd.DataFrame, Callable]:
     """
-    Compute metrics separately for each contextual regime (e.g., spread regime).
-    Returns per-regime metrics without aggregation, exposing performance degradation
-    in specific market conditions.
+    Compute metrics for contextual regime-based scoring.
+    Aggregates metrics across regimes, weighting by observation count.
     
     Returns:
-        metric: dict[metric_name: dict[regime_id: (point_est, ci, bootstrapped_losses)]]
+        metric: dict[metric_name: (point_est, ci, bootstrapped_losses)]
         score_df: DataFrame with columns [score, group, type]
+        plot_fn: Plotting function for contextual histograms
     """
-    score_df = score_data_context(
+    score_df, plot_fn = score_data_context(
         loader, scoring_fn, scoring_fn_context,
+        return_plot_fn=True,
         score_context_kwargs=score_context_kwargs
     )
     
-    # Calculate metrics separately for each regime
-    metric = {}
-    regimes = sorted(score_df['group'].unique())
+    # Calculate metrics for each regime and aggregate across regimes
+    lens = []
+    losses = []
+    for regime_id, regime_df in score_df.groupby('group'):
+        lens.append(len(regime_df))
+        losses.append(
+            np.stack(
+                tuple(mfn(regime_df)[2] for mfn in metric_fn.values()),
+                axis=-1
+            )
+        )
     
-    for m_name, mfn in metric_fn.items():
-        metric[m_name] = {}
-        
-        for regime_id in regimes:
-            regime_df = score_df[score_df['group'] == regime_id].copy()
-            
-            if len(regime_df) == 0:
-                continue
-            
-            # Calculate metric for this regime
-            result = mfn(regime_df)
-            
-            # Handle both conditional (tuple) and unconditional (scalar) metric functions
-            if isinstance(result, tuple) and len(result) == 3:
-                point_est, _, bootstrapped = result
-            else:
-                # For unconditional metrics that return scalar, wrap in expected format
-                point_est = result
-                bootstrapped = np.array([result])
-            
-            # Calculate confidence intervals for this regime
-            q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
-            ci = np.percentile(bootstrapped, q)
-            
-            metric[m_name][regime_id] = (point_est, ci, bootstrapped)
+    # Calculate weights by normalizing the number of observations
+    weights = np.array(lens, dtype=float)
+    weights /= weights.sum()
+    losses = np.array(losses).T
     
-    return metric, score_df
+    # Sum over all regimes
+    # shape: (num metrics, n_bootstrap + 1, num regimes)
+    #     -> (num metrics, n_bootstrap + 1)
+    metric = np.nansum(losses * weights, axis=-1)
+    
+    # Get the percentiles of the bootstrapped loss values
+    q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+    # shape: (num metrics, n_bootstrap + 1)
+    ci = np.nanpercentile(metric, q, axis=-1).T
+    metric = {
+        m_name: (m[0], ci_, m) for m_name, ci_, m
+            in zip(metric_fn.keys(), ci, metric)
+    }
+    
+    return metric, score_df, plot_fn
 
 
 def score_prediction_horizons(
@@ -719,7 +738,7 @@ def run_benchmark(
             if score_context_fn is None:
                 raise ValueError(f"contextual=True but 'context_fn' not found in config for {score_name}")
             
-            scores[score_name], score_dfs[score_name] = \
+            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
                 compute_metrics_context(
                     loader,
                     score_config["fn"],

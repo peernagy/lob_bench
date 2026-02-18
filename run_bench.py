@@ -213,17 +213,6 @@ DEFAULT_SCORING_CONFIG_TIME_LAGGED = {
     # },
 }
 
-DEFAULT_SCORING_CONFIG_CONDEXT = {
-    "ask_volume | spread": {
-        "eval": {
-            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
-        },
-        "cond": {
-            "fn": lambda m, b: eval.spread(m, b).values,
-            "discrete": True,
-        }
-    },
-}
 
 
 DEFAULT_SCORING_CONFIG_CONTEXT = {
@@ -350,7 +339,7 @@ def run_benchmark(
                     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
                     # Unconditional Scoring
-                    if (args.run_all or args.uncond_only) and not (args.cond_only or args.context_only or args.time_lagged_only or args.div_only):
+                    if args.unconditional:
                         print("[*] Running unconditional scoring")
                         _maybe_log_progress("unconditional", stock, model_name, time_period, mv)
                         try:
@@ -372,7 +361,7 @@ def run_benchmark(
                             _record_failure("unconditional", stock, model_name, time_period, mv, exc)
 
                     # Conditional Scoring
-                    if (args.run_all or args.cond_only) and not (args.uncond_only or args.context_only or args.time_lagged_only or args.div_only):
+                    if args.conditional:
                         print("[*] Running conditional scoring")
                         _maybe_log_progress("conditional", stock, model_name, time_period, mv)
                         try:
@@ -393,7 +382,7 @@ def run_benchmark(
                             _record_failure("conditional", stock, model_name, time_period, mv, exc)
 
                     # Contextual Scoring
-                    if (args.run_all or args.context_only) and not (args.uncond_only or args.cond_only or args.time_lagged_only or args.div_only):
+                    if args.context:
                         print("[*] Running contextual scoring:")
                         _maybe_log_progress("contextual", stock, model_name, time_period, mv)
                         try:
@@ -415,7 +404,7 @@ def run_benchmark(
                             _record_failure("contextual", stock, model_name, time_period, mv, exc)
 
                     # Time-Lagged Scoring
-                    if (args.run_all or args.time_lagged_only) and not (args.uncond_only or args.cond_only or args.context_only or args.div_only):
+                    if args.time_lagged:
                         print("[*] Running time-lagged scoring:")
                         _maybe_log_progress("time-lagged", stock, model_name, time_period, mv)
                         try:
@@ -441,7 +430,7 @@ def run_benchmark(
                             _record_failure("time-lagged", stock, model_name, time_period, mv, exc)
 
                     # Divergence Scoring
-                    if (args.run_all or args.div_only) and not (args.uncond_only or args.cond_only or args.context_only or args.time_lagged_only):
+                    if args.divergence:
                         print("[*] Running divergence scoring")
                         _maybe_log_progress("divergence", stock, model_name, time_period, mv)
                         try:
@@ -496,44 +485,51 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", default="/homes/groups/finance/data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
     parser.add_argument("--model_name", nargs='+', default="s5_main")
-    parser.add_argument("--uncond_only", action="store_true")
-    parser.add_argument("--cond_only", action="store_true")
-    parser.add_argument("--context_only", action="store_true")
-    parser.add_argument("--time_lagged_only", action="store_true")
-    parser.add_argument("--div_only", action="store_true")
+    parser.add_argument("--unconditional", action="store_true")
+    parser.add_argument("--conditional", action="store_true")
+    parser.add_argument("--context", action="store_true")
+    parser.add_argument("--time_lagged", action="store_true")
+    parser.add_argument("--divergence", action="store_true")
     parser.add_argument("--all", action="store_true", dest="run_all")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     parser.add_argument("--progress_interval", type=int, default=60)
     args = parser.parse_args()
 
-    # Validate that --all is not combined with specific scoring flags
+    # Determine which scoring types to run
+    scoring_types = {
+        'unconditional': args.unconditional,
+        'conditional': args.conditional,
+        'context': args.context,
+        'time_lagged': args.time_lagged,
+        'divergence': args.divergence,
+    }
+    
+    # If --all flag is provided, enable all scoring types
     if args.run_all:
-        assert not (args.uncond_only or args.cond_only or args.context_only or args.time_lagged_only or args.div_only), \
-            "Cannot use --all flag with --uncond_only, --cond_only, --context_only, --time_lagged_only, or --div_only"
+        for key in scoring_types:
+            scoring_types[key] = True
+    # If no flags are provided, ask for confirmation to run all
+    elif not any(scoring_types.values()):
+        print("\n[*] No scoring flags provided. Will benchmark on all metrics by default.")
+        confirmation = input("[?] Press 'y' to proceed or any other key to cancel: ").strip().lower()
+        if confirmation != 'y':
+            print("[!] Cancelled.")
+            exit(0)
+        # Enable all scoring types
+        for key in scoring_types:
+            scoring_types[key] = True
     
-    # Validate that at least one scoring type is specified
-    scoring_flags = [args.uncond_only, args.cond_only, args.context_only, args.time_lagged_only, args.div_only, args.run_all]
-    if not any(scoring_flags):
-        print("\n[!] No scoring type specified. Please choose one of the following:")
-        print("\n    Scoring Options:")
-        print("    --uncond_only         : Run only unconditional scoring")
-        print("    --cond_only           : Run only conditional scoring")
-        print("    --context_only        : Run only contextual scoring")
-        print("    --time_lagged_only    : Run only time-lagged scoring")
-        print("    --div_only            : Run only divergence scoring")
-        print("    --all                 : Run all scoring types")
-        print("\n    Example: python run_bench.py --context_only --stock GOOG --model_name s5_main")
-        print("             python run_bench.py --all --stock GOOG INTC --model_name s5_main s5v2_uncond\n")
-        exit(1)
+    # Update args with the scoring type flags
+    args.unconditional = scoring_types['unconditional']
+    args.conditional = scoring_types['conditional']
+    args.context = scoring_types['context']
+    args.time_lagged = scoring_types['time_lagged']
+    args.divergence = scoring_types['divergence']
     
-    # Prevent conflicting single-type flags
-    if sum(scoring_flags) > 1 and not args.run_all:
-        assert False, \
-            "Cannot specify multiple scoring flags (--uncond_only, --cond_only, --context_only, --time_lagged_only, --div_only) together. Use --all to run all types."
+    assert not (args.div_error_bounds and not (args.divergence or args.run_all)), \
+        "Cannot calculate divergence error bounds without running divergence scoring (use --divergence or --all flag)"
     
-    assert not (args.div_error_bounds and not (args.div_only or args.run_all)), \
-        "Cannot calculate divergence error bounds without running divergence scoring (use --div_only or --all)"
     t0=time.time()
     run_benchmark(args)
     t1=time.time()

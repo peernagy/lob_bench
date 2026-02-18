@@ -117,25 +117,6 @@ def _tag_scores(scores: dict, tag: str) -> dict:
     return {f"{tag}:{name}": val for name, val in scores.items()}
 
 
-def _aggregate_context_metrics(metric_by_regime: dict, ci_alpha: float = 0.01) -> dict:
-    aggregated = {}
-    for metric_name, regimes in metric_by_regime.items():
-        bootstraps = []
-        for regime_val in regimes.values():
-            if not regime_val or len(regime_val) < 3:
-                continue
-            boot = np.asarray(regime_val[2]).ravel()
-            if boot.size:
-                bootstraps.append(boot)
-        if not bootstraps:
-            continue
-        flat = np.concatenate(bootstraps)
-        q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
-        ci = np.percentile(flat, q)
-        aggregated[metric_name] = (np.nanmean(flat), ci, flat)
-    return aggregated
-
-
 def _aggregate_divergence_scores(score_list: list, ci_alpha: float = 0.01) -> dict:
     bootstraps = []
     for score_val in score_list:
@@ -256,12 +237,9 @@ def run_plotting(
             )
     for stock, score_stock in all_scores_context.items():
         for model, score_model in score_stock.items():
-            context_scores = {}
-            for score_name, metric_by_regime in score_model.items():
-                aggregated = _aggregate_context_metrics(metric_by_regime)
-                if aggregated:
-                    context_scores[f"context:{score_name}"] = aggregated
-            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(context_scores)
+            combined_scores.setdefault(stock, {}).setdefault(model, {}).update(
+                _tag_scores(score_model, "context")
+            )
     for stock, score_stock in all_scores_div.items():
         for model, score_model in score_stock.items():
             if model.upper() == "REAL":
@@ -501,57 +479,26 @@ def run_plotting(
         for stock, score_stock in tqdm(all_dfs_context.items(), position=0, desc="Stock"):
             for model, score_model in tqdm(score_stock.items(), position=1, desc="Model", leave=False):
                 for score_name, score_df in score_model.items():
-                    print(f"[*] Plotting {stock} {model} contextual regimes for {score_name}")
+                    # Get timestamp from model files to use in filename
+                    context_files_stock = [f for f in context_files if f"_{stock}_" in f]
+                    timestamp = "unknown"
+                    if context_files_stock:
+                        timestamp = context_files_stock[0].split("_")[-1].replace(".pkl", "")
                     
-                    # Get unique regimes and plot each regime's distribution
-                    regimes = sorted(score_df['group'].unique())
-                    max_regimes = 10
-                    if len(regimes) > max_regimes:
-                        regimes = regimes[:max_regimes]
-                        print(f"[*] Limiting to first {max_regimes} regimes for plotting")
-                    n_regimes = len(regimes)
-
-                    n_cols = min(5, n_regimes)
-                    n_rows = int(np.ceil(n_regimes / n_cols))
-                    fig, axes = plt.subplots(
-                        n_rows,
-                        n_cols,
-                        figsize=(6 * n_cols, 4 * n_rows),
-                        squeeze=False,
+                    # Use facet_grid_hist similar to conditional/time-lagged scoring
+                    binwidth = 100 if "spread" in score_name else None
+                    plotting.facet_grid_hist(
+                        score_df,
+                        var_eval=score_name,
+                        var_cond="regime",
+                        filter_groups_below_weight=0.01,
+                        bins='auto',
+                        binwidth=binwidth,
+                        stock=stock,
+                        model=model,
                     )
-                    axes_flat = axes.reshape(-1)
-                    
-                    for ax, regime_id in zip(axes_flat, regimes):
-                        regime_data = score_df[score_df['group'] == regime_id]
-                        
-                        # Separate real and generated scores
-                        real_scores = regime_data[regime_data['type'] == 'real']['score'].values
-                        gen_scores = regime_data[regime_data['type'] == 'generated']['score'].values
-                        
-                        # Compute histogram bins
-                        all_scores = np.concatenate([real_scores, gen_scores])
-                        bins = np.histogram_bin_edges(all_scores, bins=15)
-                        
-                        # Plot histograms
-                        ax.hist(real_scores, bins=bins, alpha=0.6, label='Real', 
-                               color='#1f77b4', edgecolor='black')
-                        ax.hist(gen_scores, bins=bins, alpha=0.6, label='Generated', 
-                               color='#ff7f0e', edgecolor='black')
-                        
-                        ax.set_title(f'Regime {regime_id}', fontsize=12)
-                        ax.set_xlabel('Score')
-                        ax.set_ylabel('Frequency')
-                        ax.legend()
-                        ax.grid(True, alpha=0.3)
-
-                    for ax in axes_flat[n_regimes:]:
-                        ax.set_visible(False)
-                    
-                    plt.suptitle(f'{stock} {model} - {score_name} (Contextual Regimes)', 
-                                fontsize=14)
-                    plt.tight_layout()
                     plt.savefig(
-                        f"{plot_dir}/hist_context_{stock}_{model}_{score_name.replace(' | ', '_')}.png",
+                        f"{plot_dir}/hist_context_{stock}_{model}_{score_name}_{timestamp}.png",
                         bbox_inches="tight", dpi=300
                     )
                     plt.close()

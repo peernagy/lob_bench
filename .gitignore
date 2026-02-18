@@ -34,3 +34,5 @@ data
 Miniconda3*
 *.pyc
 logs/*
+*.md
+!README.md
