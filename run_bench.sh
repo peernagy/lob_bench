@@ -29,8 +29,8 @@ fi
 
 # Install dependencies from requirements-fixed.txt
 echo "Installing dependencies..."
-pip install --upgrade pip setuptools wheel
-pip install -r requirements-fixed.txt
+pip install --upgrade pip setuptools wheel -qq
+pip install -r requirements-fixed.txt -qq
 
 # Run the benchmark
 echo "Starting benchmark run at $(date)"

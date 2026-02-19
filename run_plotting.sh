@@ -20,7 +20,7 @@ conda activate "$CONDA_ENV"
 
 # 2. Install dependencies (Quietly)
 echo "Installing dependencies..."
-pip install -q -r requirements-fixed.txt
+pip install -r requirements-fixed.txt -qq
 
 # 3. The "HPC Fix" for Segmentation Faults
 # This forces Kaleido to run in a pure headless state
@@ -31,4 +31,4 @@ chmod 700 $XDG_RUNTIME_DIR
 
 # 4. Run
 echo "Starting plot run..."
-python run_plotting.py
+python run_plotting.py --histograms

@@ -36,3 +36,4 @@ Miniconda3*
 logs/*
 *.md
 !README.md
+LOCAL_TESTING/*
