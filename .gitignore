@@ -37,3 +37,4 @@ logs/*
 *.md
 !README.md
 LOCAL_TESTING/*
+bench_data/*

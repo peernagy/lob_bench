@@ -35,10 +35,10 @@ pip install -r requirements-fixed.txt -qq
 # Run the benchmark
 echo "Starting benchmark run at $(date)"
 PYTHONUNBUFFERED=1 python run_bench.py \
-    --data_dir /lus/lfs1aip2/projects/s5e/public/quant_team/LOBS5/inference/logical-serenity-19_2168595 \
+    --data_dir /home/s5e/satyamaga.s5e/lob_bench/bench_data/rich-cloud-16 \
     --model_name . \
-    --stock . \
-    --time_period . \
+    --stock GOOG \
+    --time_period 2023 \
     --save_dir ./results \
     --all \
     --progress_interval 60

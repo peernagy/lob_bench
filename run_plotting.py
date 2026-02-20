@@ -146,19 +146,22 @@ def _summary_stats_flexible(
         metric_scores = [s[metric_name] for s in scores.values() if metric_name in s]
         if not metric_scores:
             continue
-        bootstraps = [np.asarray(s[2]).ravel() for s in metric_scores]
-        min_len = min((b.size for b in bootstraps if b.size > 0), default=0)
-        if min_len == 0:
+
+        point_vals = np.asarray([s[0] for s in metric_scores], dtype=float)
+        point_vals = point_vals[np.isfinite(point_vals)]
+        n_points = point_vals.size
+        if n_points == 0:
             continue
-        loss_vals = np.array([
-            rng_np.choice(b, size=min_len, replace=b.size < min_len)
-            for b in bootstraps
-        ])
-        aggr_mean, aggr_median, aggr_iqm = scoring._calc_summary_stats(loss_vals)
+
+        q25, q75 = np.percentile(point_vals, [25, 75])
+        iqm_vals = point_vals[(point_vals >= q25) & (point_vals <= q75)]
+        aggr_mean = float(np.mean(point_vals))
+        aggr_median = float(np.median(point_vals))
+        aggr_iqm = float(np.mean(iqm_vals)) if iqm_vals.size else float(np.mean(point_vals))
 
         if bootstrap:
             losses_bootstrap = np.array([
-                [rng_np.choice(b) for b in bootstraps]
+                rng_np.choice(point_vals, size=n_points, replace=True)
                 for _ in range(n_bootstrap)
             ])
             bs_mean, bs_median, bs_iqm = scoring._calc_summary_stats(losses_bootstrap)
