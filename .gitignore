@@ -30,3 +30,11 @@ results/*
 plots/* 
 old_result_files/*
 sample_data/*  
+data
+Miniconda3*
+*.pyc
+logs/*
+*.md
+!README.md
+LOCAL_TESTING/*
+bench_data/*
