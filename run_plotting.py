@@ -18,6 +18,7 @@ from run_bench import load_results
 import traceback
 import warnings
 import sys
+import subprocess
 
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
@@ -57,34 +58,67 @@ def _load_all_scores(files):
     all_scores = {}
     all_dfs = {}
     all_timestamps = {}
+    files_by_key = {}
     for f in files:
         score_type, stock, model, timestamp = _parse_score_filename(f)
-        
-        print(f"  Loading: {f.rsplit('/', 1)[-1]}")
-        print(
-            "    Parsed as - Type: {score_type}, Stock: {stock}, Model: {model}, "
-            "Timestamp: {timestamp}".format(
-                score_type=score_type,
-                stock=stock,
-                model=model,
-                timestamp=timestamp,
+        key = (score_type, stock, model)
+        files_by_key.setdefault(key, []).append((timestamp, f))
+
+    # Prefer latest timestamp and fall back to older files when the latest is
+    # unreadable (e.g., stale symlink target on shared filesystem).
+    for (score_type, stock, model), candidates in sorted(files_by_key.items()):
+        candidates = sorted(candidates, key=lambda x: x[0], reverse=True)
+        loaded = False
+
+        for timestamp, f in candidates:
+            print(f"  Loading: {f.rsplit('/', 1)[-1]}")
+            print(
+                "    Parsed as - Type: {score_type}, Stock: {stock}, Model: {model}, "
+                "Timestamp: {timestamp}".format(
+                    score_type=score_type,
+                    stock=stock,
+                    model=model,
+                    timestamp=timestamp,
+                )
             )
-        )
-        
-        scores, scores_dfs = load_results(f)
-        print(f"    Loaded {len(scores)} score metrics")
-        
-        if stock not in all_scores:
-            all_scores[stock] = {}
-            all_dfs[stock] = {}
-            all_timestamps[stock] = {}
-        
-        # Store with timestamp to handle multiple runs
-        # Use latest timestamp for each stock/model combination
-        if model not in all_scores[stock] or timestamp > all_timestamps[stock].get(model, ""):
+
+            # Fast probe to avoid blocking indefinitely on unreadable symlink targets.
+            probe = subprocess.run(
+                ["timeout", "5s", "head", "-c", "2", f],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if probe.returncode == 124:
+                print(f"    [warn] Read probe timed out; skipping candidate")
+                continue
+            if probe.returncode != 0:
+                print(f"    [warn] Read probe failed (rc={probe.returncode}); skipping candidate")
+                continue
+
+            try:
+                scores, scores_dfs = load_results(f)
+            except Exception as exc:
+                print(f"    [warn] Failed to load file ({exc}); trying older candidate")
+                continue
+
+            print(f"    Loaded {len(scores)} score metrics")
+
+            if stock not in all_scores:
+                all_scores[stock] = {}
+                all_dfs[stock] = {}
+                all_timestamps[stock] = {}
+
             all_scores[stock][model] = scores
             all_dfs[stock][model] = scores_dfs
             all_timestamps[stock][model] = timestamp
+            loaded = True
+            break
+
+        if not loaded:
+            print(
+                f"    [warn] No readable files for Type={score_type}, Stock={stock}, Model={model}"
+            )
     
     return all_scores, all_dfs, all_timestamps
 
@@ -142,8 +176,25 @@ def _summary_stats_flexible(
 ):
     return_dict = {}
     metric_names = sorted({m for s in scores.values() for m in s.keys()})
+
+    def _normalize_metric_scores(raw_val):
+        if isinstance(raw_val, dict):
+            return [v for v in raw_val.values() if isinstance(v, (tuple, list)) and len(v) >= 2]
+        if isinstance(raw_val, list):
+            # list of tuples/lists used by some score formats
+            if raw_val and isinstance(raw_val[0], (tuple, list)):
+                return [v for v in raw_val if len(v) >= 2]
+            return []
+        if isinstance(raw_val, tuple) and len(raw_val) >= 2:
+            return [raw_val]
+        return []
+
     for metric_name in metric_names:
-        metric_scores = [s[metric_name] for s in scores.values() if metric_name in s]
+        metric_scores = []
+        for score_val in scores.values():
+            if metric_name not in score_val:
+                continue
+            metric_scores.extend(_normalize_metric_scores(score_val[metric_name]))
         if not metric_scores:
             continue
 
@@ -187,7 +238,7 @@ def run_plotting(
     model_name: str,
 ) -> None:
     # load all saved stats
-    print("[*] Loading data...")
+    print("[*] Loading data...", flush=True)
     uncond_files = sorted(glob(score_dir + "/scores_uncond_*.pkl"))
     cond_files = sorted(glob(score_dir + "/scores_cond_*.pkl"))
     context_files = sorted(glob(score_dir + "/scores_context_*.pkl"))

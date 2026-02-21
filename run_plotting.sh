@@ -1,9 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=lob_bench_plotting
-#SBATCH --time=00:15:00
+#SBATCH --time=00:25:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
 #SBATCH --output=logs/lob_bench_plotting_%j.out
 #SBATCH --error=logs/lob_bench_plotting_%j.err
 
@@ -22,9 +20,9 @@ conda activate "$CONDA_ENV"
 echo "Installing dependencies..."
 pip install -r requirements-fixed.txt -qq
 pip install --upgrade "numpy==2.2.4" "matplotlib>=3.10.0" "scikit_learn>=1.5.2" -qq
-pip install --upgrade "pandas>=3.0.1" "statsmodels>=0.14.6" -qq
-# Compatibility for externally-generated score pickles
-pip install --upgrade "pandas>=3.0.1" "statsmodels>=0.14.6" -qq
+# Force clean reinstall to avoid mixed statsmodels files that can cause
+# ImportError: cannot import name 'SP_LT_116' from statsmodels.compat.scipy
+pip install --upgrade --force-reinstall --no-cache-dir "scipy==1.15.2" "statsmodels==0.14.6" -qq
 
 # 3. The "HPC Fix" for Segmentation Faults
 # This forces Kaleido to run in a pure headless state
@@ -35,4 +33,4 @@ chmod 700 $XDG_RUNTIME_DIR
 
 # 4. Run
 echo "Starting plot run..."
-python run_plotting.py --score_dir /home/s5e/satyamaga.s5e/pipeline/all_scores --summary_only
+python -u run_plotting.py --score_dir /projects/s5e/lob_pipeline/Symlinked-Scores --summary_only
