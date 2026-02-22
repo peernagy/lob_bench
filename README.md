@@ -1,140 +1,111 @@
-# LOB‑Bench
+# LOB-Bench
 
-*Benchmarking generative models for **Limit Order Book** data*
+Benchmarking library for evaluating generative **Limit Order Book** models against real LOBSTER-format data. Compares 20+ distributional metrics with bootstrap confidence intervals.
 
----
+**Paper:** [LOB-Bench: Benchmarking Generative AI for Finance](https://arxiv.org/abs/2502.09172)
 
-## Table of Contents
-1. [Why LOB‑Bench?](#why)
-2. [Library Architecture](#arch)
-3. [Installation](#installation)
-4. [Quick Start](#quickstart)
-5. [Benchmarking Workflow](#workflow)
-6. [Extending](#extend)
-7. [Citing](#citing)
-8. [Resources](#resources)
+## Setup
 
----
-
-## <a id="why"></a> Why LOB‑Bench?
-*   Quantitatively compares **real** and **generated** LOB sequences.
-*   Ready‑made score functions, distance metrics, and impact‑response analysis.
-*   Works out‑of‑the‑box with LOBSTER CSVs, yet fully extensible.
-
----
-
-## <a id="arch"></a> Library Architecture
-
-### I. Distributional Evaluation
-For every sequence the library computes **1‑D scores** and measures the distance between
-real and generated distributions.
-
-*Implemented distance metrics*
-* **L1 / Total Variation**
-* **Wasserstein‑1**
-
-*Implemented score functions*
-| # | Score | Description |
-|---|-------|-------------|
-| i. | **Spread** | Best ask − best bid price |
-| ii. | **Interarrival time** | Time between two successive orders (ms) |
-| iii. | **Orderbook imbalance** | Volume difference at best bid/ask |
-| iv. | **Time to cancel** | Order submission → first cancel/modify |
-| v./vi. | **Ask/Bid volume (n levels)** | Volume on each side, first *n* levels (default 10) |
-| vii./viii. | **Limit‑order depths** | Distance of new limit orders from mid‑price |
-| ix./x. | **Limit‑order levels** | Price level index (1…*n*) of new limits |
-| xi./xii. | **Cancel‑order depths** | Distance of cancellations from mid‑price |
-| xiii./xiv. | **Cancel‑order levels** | Level index (1…*n*) of cancellations |
-
-*Conditional score functions*
-| # | Conditional metric |
-|---|-------------------|
-| i. | Ask‑volume (level 1) **conditional on spread** |
-| ii. | Spread **conditional on hour‑of‑day** |
-| iii. | Spread **conditional on volatility** (std. dev. of returns) |
-
-### II. Impact‑Response Evaluation
-The price‑response function is calculated for six event types:
-| Code | Event | Mid‑price change? |
-|------|-------|-------------------|
-| `MO_0` | Market order | ✗ |
-| `MO_1` | Market order | ✓ |
-| `LO_0` | Limit order  | ✗ |
-| `LO_1` | Limit order  | ✓ |
-| `CA_0` | Cancel       | ✗ |
-| `CA_1` | Cancel       | ✓ |
-
-For each event type the library plots the response curve and reports the mean
-absolute deviation between real and generated curves.
-
----
-
-## <a id="installation"></a> Installation
 ```bash
-pip install lob_bench
+conda create -n lob_bench python=3.11
+conda activate lob_bench
+pip install -r requirements-fixed.txt
 ```
-Requires Python ≥ 3.9 plus `numpy`, `pandas`, `scipy`, `matplotlib`.
 
----
+## Data Format
 
-## <a id="quickstart"></a> Quick Start
-```python
-from lob_bench import data_loading, scoring, impact
-
-# 1  Load data ─────────────────────────
-loader = data_loading.Simple_Loader(
-    cond_path     = "./data/seed_sequences",   # optional
-    generated_path = "./data/generated_sequences",
-    real_path      = "./data/real_sequences"
-)
-# Each folder must contain the **same number** of LOBSTER‑format CSVs.
-
-# 2  Define scores & metrics ───────────
-score_cfg = {
-    "Spread"       : {"fn": scoring.spread},
-    "Interarrival" : {"fn": scoring.interarrival, "Discrete": False},
-    "Imbalance"    : {"fn": scoring.imbalance},
-    # Conditional example
-    "AskVol|Spread": {
-        "eval": {"fn": scoring.ask_volume_lvl1},
-        "cond": {"fn": scoring.spread}
-    },
-}
-
-metric_cfg = {
-    "L1"         : scoring.l1_distance,
-    "Wasserstein": scoring.wasserstein_distance,
-}
-
-# 3  Run benchmark ─────────────────────
-results = scoring.run_benchmark(loader, score_cfg, metric_cfg)
-# returns (distances, raw_scores, plotting_helpers)
-
-# 4  Impact response ───────────────────
-impact_curves, impact_score = impact.impact_compare(loader)
+Expects LOBSTER-format CSV directories:
 ```
-See `tutorial.ipynb` for a full walk‑through.
+{DATA_DIR}/{MODEL}/{STOCK}/{TIME_PERIOD}/
+    data_real/    *message*.csv + *orderbook*.csv
+    data_gen/     *message*.csv (with real_id_X_gen_id_Y naming)
+    data_cond/    *message*.csv + *orderbook*.csv (conditioning sequences)
+```
 
----
+Messages: 6 columns (time, event_type, order_id, size, price, direction).
+Orderbook: 40 columns (10 levels x 2 sides x {price, volume}).
 
-## <a id="workflow"></a> Benchmarking Workflow
-1. **Prepare data** – three equal‑length CSV folders (conditioning, generated, real).
-2. **Define score & metric dicts** – or import defaults from `lob_bench.defaults`.
-3. **Call `run_benchmark`** – get distances, bootstrap CIs, and plotting helpers.
-4. **Call `impact_compare`** – analyse six event‑type response curves.
+## Running Benchmarks
 
----
+```bash
+# All scoring modes
+python run_bench.py \
+    --data_dir /path/to/eval_data \
+    --model_name s5_main \
+    --stock GOOG \
+    --time_period 2023_Jan \
+    --save_dir ./results \
+    --all
 
-## <a id="extend"></a> Extending
-* **Custom score** – implement `my_score(messages, books) -> ndarray` and add to the score dict.
-* **Custom metric** – function `(real_vals, gen_vals) -> float`, add to metric dict.
-* **Custom loader** – subclass `BaseLoader` for alternative storage formats.
+# Specific modes
+python run_bench.py ... --unconditional --divergence
 
-Pull requests are welcome 🎉.
+# SLURM array (parallel across metrics)
+sbatch run_bench_metrics_array.sh
 
----
+# Merge shards after array job
+python merge_shards.py "results/scores/scores_uncond_*_shard*_<JOB_ID>.pkl" \
+    -o results/scores/scores_uncond_GOOG_merged.pkl
+```
 
-## <a id="citing"></a> Citing
+### Scoring Modes
+
+| Flag | Mode | Description |
+|------|------|-------------|
+| `--unconditional` | Marginal | 21 score functions (spread, volumes, depths, OFI, etc.) |
+| `--conditional` | Conditional | Metric A given metric B (e.g. volume \| spread) |
+| `--context` | Contextual | Regime-aware: bins by conditioning data, evaluates per-regime |
+| `--time_lagged` | Time-lagged | Metric at _t_ conditioned on metric at _t - lag_ |
+| `--divergence` | Divergence | Distribution drift across prediction horizons |
+
+## Plotting
+
+```bash
+# Summary plots from saved scores
+python run_plotting.py --score_dir ./results/scores --plot_dir ./results/plots --summary_only
+
+# Full plots including per-metric histograms
+python run_plotting.py --score_dir ./results/scores --histograms
+```
+
+## Impact Analysis
+
+```bash
+python impact.py \
+    --stock GOOG --data_dir /path/to/data --model_name s5_main \
+    --save_dir ./results \
+    --micro_calculate --micro_plot
+```
+
+Computes Bouchaud-style price-response curves for 6 event types (MO_0/1, LO_0/1, CA_0/1).
+
+## Metrics
+
+All scoring modes produce distances measured by:
+- **L1** (histogram bin divergence)
+- **Wasserstein** (earth mover's, normalized)
+- **KS** (Kolmogorov-Smirnov statistic)
+
+Each includes bootstrap CIs (default n=100).
+
+## File Structure
+
+```
+data_loading.py        # LOBSTER CSV loader (Simple_Loader, Lobster_Sequence)
+eval.py                # Score functions (spread, volumes, depths, OFI, interarrival, etc.)
+scoring.py             # Scoring engine (runs all modes, bootstrap, summary stats)
+partitioning.py        # Binning, grouping, score table construction
+metrics.py             # Distance metrics (L1, Wasserstein, KS) with bootstrap
+plotting.py            # Visualization (histograms, spider plots, divergence curves)
+impact.py              # Market impact response functions
+run_bench.py           # CLI: run scoring
+run_plotting.py        # CLI: generate plots from saved scores
+merge_shards.py        # Merge SLURM array shard outputs
+tests/                 # Test and experiment scripts
+```
+
+## Citing
+
 ```bibtex
 @misc{nagy2025lobbenchbenchmarkinggenerativeai,
   title   = {LOB-Bench: Benchmarking Generative AI for Finance -- an Application to Limit Order Book Data},
@@ -146,14 +117,3 @@ Pull requests are welcome 🎉.
   url     = {https://arxiv.org/abs/2502.09172}
 }
 ```
-
----
-
-## <a id="resources"></a> Resources
-* 📄 **Paper:** <https://arxiv.org/abs/2502.09172>
-* 🌐 **Project site:** <https://lobbench.github.io/>
-* 🐙 **Source code:** <https://github.com/peernagy/lob_bench>
-
----
-
-Licensed under **MIT**.
