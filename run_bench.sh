@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=lob_bench
-#SBATCH --time=06:00:00
+#SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=72
+#SBATCH --gpus-per-node=1
 #SBATCH --output=logs/lob_bench_%j.out
 #SBATCH --error=logs/lob_bench_%j.err
 
@@ -41,6 +42,7 @@ PYTHONUNBUFFERED=1 python run_bench.py \
     --time_period 2023 \
     --save_dir ./results \
     --all \
-    --progress_interval 60
+    --progress_interval 60 \
+    --n_workers 64
 
 echo "Benchmark completed at $(date)"
