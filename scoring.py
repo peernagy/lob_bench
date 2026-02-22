@@ -717,12 +717,18 @@ def _replace_gen_with_real_scores(horizon_df):
 
 def calc_baseline_errors_by_score(
     scoring_dfs_horizon_all_scores: dict[str, list[pd.DataFrame]],
-    metric_fn: Callable[[pd.DataFrame], float],
-) -> dict[str, list[float]]:
+    metric_fn: Union[Callable[[pd.DataFrame], float],
+                     dict[str, Callable[[pd.DataFrame], float]]],
+) -> dict[str, list]:
+    # Use first metric (typically l1) for baseline reference line
+    if isinstance(metric_fn, dict):
+        first_fn = next(iter(metric_fn.values()))
+    else:
+        first_fn = metric_fn
     baseline_errors_by_score = {
         score_name: [
             # TODO: generalize this to other metrics
-            metric_fn(
+            first_fn(
                 _replace_gen_with_real_scores(df),
                 # we want one-sided: 0.99
                 # --> upper limit of the two-sided intervals for 0.98
@@ -736,8 +742,8 @@ def calc_baseline_errors_by_score(
 def compute_divergence_metrics(
         loader: data_loading.Simple_Loader,
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        metric_fn: Union[Callable[[pd.DataFrame], float] , \
-                   Iterable[Callable[[pd.DataFrame], float]]],
+        metric_fn: Union[Callable[[pd.DataFrame], float],
+                   dict[str, Callable[[pd.DataFrame], float]]],
         horizon_length: int,
         **kwargs,
     ):
@@ -750,17 +756,30 @@ def compute_divergence_metrics(
         # quantiles=[0.25, 0.5, 0.75],
         **kwargs,
     )
-    # L1 scores for each horizon distribution
-    loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
 
-    plot_fn = lambda title, ax: plotting.error_divergence_plot(
-        loss_horizons,
-        horizon_length,
-        title=title,
-        xlabel='Prediction Horizon [messages]',
-        ylabel='L1 score',
-        ax=ax,
-    )
+    if isinstance(metric_fn, dict):
+        # Per-metric divergence curves: {name: [(point, ci, losses), ...per horizon]}
+        loss_horizons = {
+            m_name: [m(sdf) for sdf in score_dfs_horizon]
+            for m_name, m in metric_fn.items()
+        }
+        # Plot uses first metric (consistent with compute_metrics pattern)
+        first_key = next(iter(loss_horizons))
+        plot_fn = lambda title, ax, _lh=loss_horizons[first_key]: \
+            plotting.error_divergence_plot(
+                _lh, horizon_length, title=title,
+                xlabel='Prediction Horizon [messages]', ylabel='L1 score',
+                ax=ax,
+            )
+    else:
+        # Legacy single-callable path
+        loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
+        plot_fn = lambda title, ax: plotting.error_divergence_plot(
+            loss_horizons, horizon_length, title=title,
+            xlabel='Prediction Horizon [messages]', ylabel='L1 score',
+            ax=ax,
+        )
+
     return loss_horizons, score_dfs_horizon, plot_fn
 
 
