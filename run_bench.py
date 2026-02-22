@@ -234,6 +234,15 @@ DEFAULT_SCORING_CONFIG_CONTEXT = {
 }
 
 
+def _filter_config(config, metric_names):
+    """Filter a scoring config dict to only include specified metric names."""
+    filtered = {k: v for k, v in config.items() if k in metric_names}
+    missing = set(metric_names) - set(config.keys())
+    if missing:
+        print(f"[!] Warning: requested metrics not found in config: {missing}")
+    return filtered
+
+
 def save_results(scores, scores_dfs, save_path, protocol=-1):
     # make sure the folder exists
     folder_path = save_path.rsplit("/", 1)[0]
@@ -275,6 +284,15 @@ def run_benchmark(
         scoring_config_time_lagged = DEFAULT_SCORING_CONFIG_TIME_LAGGED
     if metric_config is None:
         metric_config = DEFAULT_METRICS
+
+    # Filter scoring config to requested metric subset (for sharded runs).
+    # Only filters unconditional config (also used by divergence mode).
+    # Conditional/contextual/time-lagged have different key namespaces.
+    metrics_arg = getattr(args, "metrics", None)
+    if metrics_arg:
+        metric_names = [m.strip() for m in metrics_arg.split(",")]
+        scoring_config = _filter_config(scoring_config, metric_names)
+        print(f"[*] Filtered to {len(scoring_config)} metrics: {list(scoring_config.keys())}")
 
     if isinstance(args.stock, str):
         args.stock = [args.stock]
@@ -336,8 +354,11 @@ def run_benchmark(
                     for s in loader:
                         s.materialize()
 
-                    time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    
+                    run_id = getattr(args, "run_id", None)
+                    shard_id = getattr(args, "shard_id", None)
+                    time_str = run_id if run_id else datetime.now().strftime("%Y%m%d_%H%M%S")
+                    shard_suffix = f"_shard{shard_id}" if shard_id else ""
+
                     # Unconditional Scoring
                     if args.unconditional:
                         print("[*] Running unconditional scoring")
@@ -354,7 +375,7 @@ def run_benchmark(
                                 scores,
                                 score_dfs,
                                 args.save_dir+"/scores"
-                                + f"/scores_uncond_{stock}_{model_name}{mv_suffix}_{time_str}.pkl"
+                                + f"/scores_uncond_{stock}_{model_name}{mv_suffix}{shard_suffix}_{time_str}.pkl"
                             )
                             print("... done")
                         except Exception as exc:
@@ -375,7 +396,7 @@ def run_benchmark(
                                 scores_cond,
                                 score_dfs_cond,
                                 args.save_dir+"/scores"
-                                + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
+                                + f"/scores_cond_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
                             )
                             print("... done")
                         except Exception as exc:
@@ -397,7 +418,7 @@ def run_benchmark(
                                 scores_context,
                                 score_dfs_context,
                                 args.save_dir+"/scores"
-                                + f"/scores_context_{stock}_{model_name}_{time_str}.pkl"
+                                + f"/scores_context_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
                             )
                             print("... done")
                         except Exception as exc:
@@ -419,7 +440,7 @@ def run_benchmark(
                                 scores_time_lagged,
                                 score_dfs_time_lagged,
                                 args.save_dir+"/scores"
-                                + f"/scores_time_lagged_{stock}_{model_name}_{time_str}.pkl"
+                                + f"/scores_time_lagged_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
                             )
                             print("... done")
                         except ValueError as exc:
@@ -447,7 +468,7 @@ def run_benchmark(
                                 score_dfs_,
                                 args.save_dir+"/scores"
                                 + f"/scores_div_{stock}_{model_name}_"
-                                + f"{args.divergence_horizon}_{time_str}.pkl"
+                                + f"{args.divergence_horizon}{shard_suffix}_{time_str}.pkl"
                             )
                             print("... done")
 
@@ -463,7 +484,7 @@ def run_benchmark(
                                     None,
                                     args.save_dir+"/scores"
                                     + f"/scores_div_{stock}_REAL_"
-                                    + f"{args.divergence_horizon}_{time_str}.pkl"
+                                    + f"{args.divergence_horizon}{shard_suffix}_{time_str}.pkl"
                                 )
                                 print("... done")
                         except Exception as exc:
@@ -494,6 +515,12 @@ if __name__ == "__main__":
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     parser.add_argument("--progress_interval", type=int, default=60)
+    parser.add_argument("--metrics", type=str, default=None,
+                        help="Comma-separated metric names to score (subset of DEFAULT_SCORING_CONFIG keys)")
+    parser.add_argument("--run_id", type=str, default=None,
+                        help="Shared run identifier for shard grouping (e.g. SLURM_ARRAY_JOB_ID)")
+    parser.add_argument("--shard_id", type=str, default=None,
+                        help="Shard identifier appended to output filename")
     args = parser.parse_args()
 
     # Determine which scoring types to run
