@@ -142,6 +142,62 @@ def score_data_cond(
         return score_df
 
 
+def _score_one_seq_lagged(seq, scoring_fn, scoring_fn_lagged, lag, is_real):
+    """Process one sequence for time-lagged scoring (module-level for joblib pickling)."""
+
+    def _align_and_slice(m_merged, b_merged):
+        min_len = min(len(m_merged), len(b_merged))
+        if min_len <= lag:
+            return None, None
+        return m_merged.iloc[:min_len].iloc[lag:], b_merged.iloc[:min_len].iloc[lag:]
+
+    def _align_scores(score_lagged, score_eval):
+        sl = np.asarray(score_lagged)
+        se = np.asarray(score_eval)
+        if sl.ndim == 0 or se.ndim == 0:
+            return None, None
+        ml = min(len(sl), len(se))
+        if ml == 0:
+            return None, None
+        return sl[-ml:], se[-ml:]
+
+    if is_real:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
+            b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
+        m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+        if m_sliced is None:
+            return None
+        sl = scoring_fn_lagged(m_sliced, b_sliced)
+        se = scoring_fn(m_sliced, b_sliced)
+        sl, se = _align_scores(sl, se)
+        if sl is None:
+            return None
+        return (sl, se)
+    else:
+        scores_lagged_seq = []
+        scores_eval_seq = []
+        for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
+                b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
+            m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+            if m_sliced is None:
+                continue
+            sl = scoring_fn_lagged(m_sliced, b_sliced)
+            se = scoring_fn(m_sliced, b_sliced)
+            sl, se = _align_scores(sl, se)
+            if sl is None:
+                continue
+            scores_lagged_seq.append(sl)
+            scores_eval_seq.append(se)
+        if not scores_lagged_seq:
+            return None
+        return (tuple(scores_lagged_seq), tuple(scores_eval_seq))
+
+
 def score_data_time_lagged(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -151,6 +207,7 @@ def score_data_time_lagged(
     return_plot_fn: bool = False,
     score_kwargs: dict = {},
     score_lagged_kwargs: dict = {},
+    n_workers: int = 1,
 ):
     """
     Time-lagged conditional scoring: evaluate scoring_fn at time t conditioned on 
@@ -272,8 +329,26 @@ def score_data_time_lagged(
         return scores_lagged_list, scores_eval_list
     
     # Compute lagged conditioning scores and evaluation scores
-    scores_lagged_real, scores_eval_real = merge_and_score_lagged(loader, is_real=True)
-    scores_lagged_gen, scores_eval_gen = merge_and_score_lagged(loader, is_real=False)
+    if n_workers > 1:
+        from joblib import Parallel, delayed
+        seqs_list = list(loader)
+        real_results = Parallel(n_jobs=n_workers, backend='loky')(
+            delayed(_score_one_seq_lagged)(
+                seq, scoring_fn, scoring_fn_lagged, lag, True)
+            for seq in seqs_list
+        )
+        scores_lagged_real = [r[0] for r in real_results if r is not None]
+        scores_eval_real = [r[1] for r in real_results if r is not None]
+        gen_results = Parallel(n_jobs=n_workers, backend='loky')(
+            delayed(_score_one_seq_lagged)(
+                seq, scoring_fn, scoring_fn_lagged, lag, False)
+            for seq in seqs_list
+        )
+        scores_lagged_gen = [r[0] for r in gen_results if r is not None]
+        scores_eval_gen = [r[1] for r in gen_results if r is not None]
+    else:
+        scores_lagged_real, scores_eval_real = merge_and_score_lagged(loader, is_real=True)
+        scores_lagged_gen, scores_eval_gen = merge_and_score_lagged(loader, is_real=False)
     
     # Stage 1: Bin based on lagged conditioning metric
     groups_real, groups_gen, thresholds = partitioning.group_by_score(
@@ -497,10 +572,11 @@ def compute_metrics_time_lagged(
     lag: int,
     score_kwargs: dict = {},
     score_lagged_kwargs: dict = {},
+    n_workers: int = 1,
 ) -> tuple[float, pd.DataFrame, Callable]:
     """
     Compute metrics for time-lagged conditional scoring.
-    
+
     Args:
         loader: Data loader
         scoring_fn: Evaluation metric function
@@ -509,7 +585,8 @@ def compute_metrics_time_lagged(
         lag: Time lag in message counts
         score_kwargs: Kwargs for binning evaluation metric
         score_lagged_kwargs: Kwargs for binning lagged conditioning metric
-        
+        n_workers: Number of parallel workers for sequence-level scoring
+
     Returns:
         metric: Dictionary of metric values
         score_df: DataFrame with scores and groupings
@@ -518,7 +595,8 @@ def compute_metrics_time_lagged(
     score_df, plot_fn = score_data_time_lagged(
         loader, scoring_fn, scoring_fn_lagged, lag,
         return_plot_fn=True, score_kwargs=score_kwargs,
-        score_lagged_kwargs=score_lagged_kwargs
+        score_lagged_kwargs=score_lagged_kwargs,
+        n_workers=n_workers,
     )
 
     # calc. loss for each of the conditional distributions
@@ -694,6 +772,7 @@ def run_benchmark(
     contextual: bool = False,
     time_lagged: bool = False,
     divergence_horizon: int = 50,
+    n_workers: int = 1,
 ) -> tuple[
     dict[str, float],
     dict[str, pd.DataFrame],
@@ -703,6 +782,12 @@ def run_benchmark(
     scores = {}
     score_dfs = {}
     plot_fns = {}
+
+    # Enable sequence-level parallelism for ALL modes (including unconditional).
+    # Each metric runs serially, but its per-sequence scoring is parallelized
+    # across workers via joblib/loky (process-based, avoids GIL).
+    if n_workers > 1:
+        partitioning.set_n_workers(n_workers)
 
     for score_name, score_config in scoring_config_dict.items():
         print("Calculating scores and metrics for: ", score_name, end="\r\n")
@@ -726,6 +811,7 @@ def run_benchmark(
                     lag,
                     score_kwargs=score_kwargs,
                     score_lagged_kwargs=score_cond_kwargs,
+                    n_workers=n_workers,
                 )
 
         # contextual scoring
@@ -800,6 +886,10 @@ def run_benchmark(
                         score_kwargs=score_kwargs,
                         score_cond_kwargs={},
                     )
+
+    # Reset worker count to avoid side effects on subsequent calls
+    if n_workers > 1:
+        partitioning.set_n_workers(1)
 
     return scores, score_dfs, plot_fns
 

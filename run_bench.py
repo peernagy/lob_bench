@@ -347,7 +347,8 @@ def run_benchmark(
                             scores, score_dfs, plot_fns = scoring.run_benchmark(
                                 loader,
                                 scoring_config,
-                                default_metric=metric_config
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
@@ -368,7 +369,8 @@ def run_benchmark(
                             scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
                                 loader,
                                 scoring_config_cond,
-                                default_metric=metric_config
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
@@ -390,7 +392,8 @@ def run_benchmark(
                                 loader,
                                 scoring_config_context,
                                 default_metric=metric_config,
-                                contextual=True
+                                contextual=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving contextual results...")
                             save_results(
@@ -412,7 +415,8 @@ def run_benchmark(
                                 loader,
                                 scoring_config_time_lagged,
                                 default_metric=metric_config,
-                                time_lagged=True
+                                time_lagged=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving time-lagged results...")
                             save_results(
@@ -439,7 +443,8 @@ def run_benchmark(
                                 scoring_config,
                                 default_metric=metric_config,
                                 divergence_horizon=args.divergence_horizon,
-                                divergence=True
+                                divergence=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
@@ -494,6 +499,8 @@ if __name__ == "__main__":
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     parser.add_argument("--progress_interval", type=int, default=60)
+    parser.add_argument("--n_workers", type=int, default=1,
+                        help="Number of parallel workers (1 = serial, default)")
     args = parser.parse_args()
 
     # Determine which scoring types to run
