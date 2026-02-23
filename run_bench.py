@@ -368,7 +368,8 @@ def run_benchmark(
                             scores, score_dfs, plot_fns = scoring.run_benchmark(
                                 loader,
                                 scoring_config,
-                                default_metric=metric_config
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
@@ -389,7 +390,8 @@ def run_benchmark(
                             scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
                                 loader,
                                 scoring_config_cond,
-                                default_metric=metric_config
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
@@ -411,7 +413,8 @@ def run_benchmark(
                                 loader,
                                 scoring_config_context,
                                 default_metric=metric_config,
-                                contextual=True
+                                contextual=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving contextual results...")
                             save_results(
@@ -433,7 +436,8 @@ def run_benchmark(
                                 loader,
                                 scoring_config_time_lagged,
                                 default_metric=metric_config,
-                                time_lagged=True
+                                time_lagged=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving time-lagged results...")
                             save_results(
@@ -460,15 +464,16 @@ def run_benchmark(
                                 scoring_config,
                                 default_metric=metric_config,
                                 divergence_horizon=args.divergence_horizon,
-                                divergence=True
+                                divergence=True,
+                                n_workers=args.n_workers,
                             )
                             print("[*] Saving results...")
                             save_results(
                                 scores_,
                                 score_dfs_,
                                 args.save_dir+"/scores"
-                                + f"/scores_div_{stock}_{model_name}_"
-                                + f"{args.divergence_horizon}{shard_suffix}_{time_str}.pkl"
+                                + f"/scores_div_{stock}_{model_name}{shard_suffix}_"
+                                + f"{args.divergence_horizon}_{time_str}.pkl"
                             )
                             print("... done")
 
@@ -483,8 +488,8 @@ def run_benchmark(
                                     baseline_errors_by_score,
                                     None,
                                     args.save_dir+"/scores"
-                                    + f"/scores_div_{stock}_REAL_"
-                                    + f"{args.divergence_horizon}{shard_suffix}_{time_str}.pkl"
+                                    + f"/scores_div_{stock}_REAL{shard_suffix}_"
+                                    + f"{args.divergence_horizon}_{time_str}.pkl"
                                 )
                                 print("... done")
                         except Exception as exc:
@@ -506,21 +511,23 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", default="/homes/groups/finance/data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
     parser.add_argument("--model_name", nargs='+', default="s5_main")
-    parser.add_argument("--unconditional", action="store_true")
-    parser.add_argument("--conditional", action="store_true")
-    parser.add_argument("--context", action="store_true")
-    parser.add_argument("--time_lagged", action="store_true")
-    parser.add_argument("--divergence", action="store_true")
+    parser.add_argument("--unconditional", "--uncond_only", action="store_true")
+    parser.add_argument("--conditional", "--cond_only", action="store_true")
+    parser.add_argument("--context", "--context_only", action="store_true")
+    parser.add_argument("--time_lagged", "--time_lagged_only", action="store_true")
+    parser.add_argument("--divergence", "--div_only", action="store_true")
     parser.add_argument("--all", action="store_true", dest="run_all")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
     parser.add_argument("--progress_interval", type=int, default=60)
+    parser.add_argument("--n_workers", type=int, default=1,
+                        help="Number of parallel workers (1 = serial, default)")
     parser.add_argument("--metrics", type=str, default=None,
-                        help="Comma-separated metric names to score (subset of DEFAULT_SCORING_CONFIG keys)")
+                        help="Comma-separated metric names to score (for sharded runs)")
     parser.add_argument("--run_id", type=str, default=None,
-                        help="Shared run identifier for shard grouping (e.g. SLURM_ARRAY_JOB_ID)")
+                        help="Deterministic run ID for save paths (replaces timestamp)")
     parser.add_argument("--shard_id", type=str, default=None,
-                        help="Shard identifier appended to output filename")
+                        help="Shard identifier inserted into save filenames")
     args = parser.parse_args()
 
     # Determine which scoring types to run
