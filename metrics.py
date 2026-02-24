@@ -1,4 +1,5 @@
 from typing import Callable, Optional,Union
+import os
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -14,6 +15,217 @@ import scipy.stats
 from sklearn.neighbors import KernelDensity
 
 from scipy.spatial import cKDTree
+
+
+# --- JAX auto-detection for GPU-accelerated bootstrap ---
+_USE_JAX = False
+try:
+    import jax
+    import jax.numpy as jnp
+    _USE_JAX = True
+    # Log device at import time so we can verify GPU is used
+    _jax_devices = jax.devices()
+    print(f"[metrics] JAX available — devices: {_jax_devices}")
+except ImportError:
+    pass
+
+# --- Bootstrap subsampling for large score_dfs ---
+_MAX_BOOTSTRAP_SAMPLES = int(os.environ.get('BENCH_MAX_BOOTSTRAP_SAMPLES', '50000'))
+
+
+def _subsample_for_bootstrap(score_df: pd.DataFrame, max_samples: int = None) -> pd.DataFrame:
+    """Stratified subsample of score_df for bootstrap CI estimation.
+
+    When score_df has millions of rows (e.g. 3.1M for spread), sorting 1.568M
+    floats per bootstrap iteration dominates wall time. Subsampling to 50K
+    preserves CI accuracy (bootstrap precision depends on n_bootstrap, not
+    sample size) while enabling JAX GPU and reducing scipy sort cost 62x.
+    """
+    if max_samples is None:
+        max_samples = _MAX_BOOTSTRAP_SAMPLES
+    if max_samples <= 0 or len(score_df) <= max_samples:
+        return score_df
+    n_per_type = max_samples // 2
+    sampled = score_df.groupby('type', group_keys=False).apply(
+        lambda g: g.sample(n=min(n_per_type, len(g)), random_state=42)
+    )
+    print(f"[metrics] Bootstrap subsample: {len(score_df)} → {len(sampled)} samples", flush=True)
+    return sampled.reset_index(drop=True)
+
+
+def _use_jax_bootstrap(score_df: pd.DataFrame, n_bootstrap: int = 100) -> bool:
+    """Check if JAX bootstrap is feasible for this score_df size.
+
+    vmap materializes (n_bootstrap × n_samples) arrays for indices, sorted
+    values, and intermediates.  XLA pre-allocates the entire computation graph
+    including sort workspace (~2-4× data), staging buffers, and searchsorted
+    intermediates.  We use ~500 bytes per (bootstrap, sample) to account for
+    this — 10× more conservative than raw array sizes alone.
+    """
+    if not _USE_JAX:
+        return False
+    n = len(score_df)
+    # XLA allocates ~500 bytes per (bootstrap, sample) including sort workspace,
+    # staging buffers, searchsorted intermediates, and compilation overhead
+    est_bytes = n_bootstrap * n * 500
+    try:
+        dev = jax.devices()[0]
+        if hasattr(dev, 'memory_stats'):
+            mem_stats = dev.memory_stats()
+            if mem_stats and 'bytes_limit' in mem_stats:
+                avail = int(mem_stats['bytes_limit'] * 0.80)
+                use_jax = est_bytes < avail
+                if not use_jax:
+                    print(f"[metrics] JAX bootstrap skipped: {n} samples, "
+                          f"est {est_bytes/1e9:.1f}GB > {avail/1e9:.1f}GB avail",
+                          flush=True)
+                return use_jax
+        # Fallback: assume 90 GB (GH200 minus overhead)
+        use_jax = est_bytes < 90_000_000_000
+        if not use_jax:
+            print(f"[metrics] JAX bootstrap skipped: {n} samples, "
+                  f"est {est_bytes/1e9:.1f}GB > 90GB limit", flush=True)
+        return use_jax
+    except Exception:
+        return est_bytes < 90_000_000_000
+
+
+# --- JAX vmap bootstrap implementations ---
+
+def _bootstrap_l1_jax(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: float = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """L1 bootstrap via jax.vmap — bincount over resampled group indices."""
+    type_vals = score_df['type'].values
+    real_mask = type_vals == 'real'
+    groups = score_df['group'].values
+    real_groups_np = groups[real_mask].astype(np.intp)
+    gen_groups_np = groups[~real_mask].astype(np.intp)
+    n_real, n_gen = len(real_groups_np), len(gen_groups_np)
+    n_bins = int(max(real_groups_np.max(), gen_groups_np.max())) + 1 if (n_real > 0 and n_gen > 0) else 1
+
+    # Generate indices with numpy RNG (for reproducibility with non-JAX path)
+    real_idx_np = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx_np = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+
+    # Transfer to JAX
+    real_groups_j = jnp.array(real_groups_np, dtype=jnp.int32)
+    gen_groups_j = jnp.array(gen_groups_np, dtype=jnp.int32)
+    real_idx_j = jnp.array(real_idx_np, dtype=jnp.int32)
+    gen_idx_j = jnp.array(gen_idx_np, dtype=jnp.int32)
+
+    @jax.vmap
+    def _one_bootstrap(r_idx, g_idx):
+        r_counts = jnp.bincount(real_groups_j[r_idx], length=n_bins).astype(jnp.float32)
+        g_counts = jnp.bincount(gen_groups_j[g_idx], length=n_bins).astype(jnp.float32)
+        r_total = r_counts.sum()
+        g_total = g_counts.sum()
+        # Normalize (avoid division by zero — shouldn't happen with valid data)
+        r_counts = jnp.where(r_total > 0, r_counts / r_total, r_counts)
+        g_counts = jnp.where(g_total > 0, g_counts / g_total, g_counts)
+        return jnp.abs(r_counts - g_counts).sum() / 2.0
+
+    losses_j = _one_bootstrap(real_idx_j, gen_idx_j)  # (n_bootstrap,)
+
+    if whole_data_loss is not None:
+        losses_j = jnp.concatenate([jnp.array([whole_data_loss], dtype=jnp.float32), losses_j])
+
+    ci = jnp.percentile(losses_j, jnp.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100]))
+    return np.asarray(ci, dtype=np.float64), np.asarray(losses_j, dtype=np.float64)
+
+
+def _bootstrap_wasserstein_jax(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: float = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Wasserstein bootstrap via jax.vmap — sort-based 1D earth mover's distance."""
+    real_scores_np = score_df.loc[score_df['type'] == 'real', 'score'].values.astype(np.float32)
+    gen_scores_np = score_df.loc[score_df['type'] == 'generated', 'score'].values.astype(np.float32)
+    n_real, n_gen = len(real_scores_np), len(gen_scores_np)
+
+    # Same RNG call order as numpy path
+    real_idx_np = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx_np = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+
+    real_scores_j = jnp.array(real_scores_np)
+    gen_scores_j = jnp.array(gen_scores_np)
+    real_idx_j = jnp.array(real_idx_np, dtype=jnp.int32)
+    gen_idx_j = jnp.array(gen_idx_np, dtype=jnp.int32)
+
+    if n_real == n_gen:
+        # Equal-size: Wasserstein = mean |sorted_r - sorted_g|
+        @jax.vmap
+        def _wasserstein_one(r_idx, g_idx):
+            r = jnp.sort(real_scores_j[r_idx])
+            g = jnp.sort(gen_scores_j[g_idx])
+            return jnp.mean(jnp.abs(r - g))
+    else:
+        # Unequal-size: quantile-function approach on a fixed grid
+        n_grid = max(n_real, n_gen)
+        grid = jnp.linspace(0, 1, n_grid, endpoint=False) + 0.5 / n_grid
+
+        @jax.vmap
+        def _wasserstein_one(r_idx, g_idx):
+            r = jnp.sort(real_scores_j[r_idx])
+            g = jnp.sort(gen_scores_j[g_idx])
+            # Quantile indices (floor-based lookup into sorted arrays)
+            r_qi = jnp.clip((grid * n_real).astype(jnp.int32), 0, n_real - 1)
+            g_qi = jnp.clip((grid * n_gen).astype(jnp.int32), 0, n_gen - 1)
+            return jnp.mean(jnp.abs(r[r_qi] - g[g_qi]))
+
+    losses_j = _wasserstein_one(real_idx_j, gen_idx_j)
+
+    if whole_data_loss is not None:
+        losses_j = jnp.concatenate([jnp.array([whole_data_loss], dtype=jnp.float32), losses_j])
+
+    ci = jnp.percentile(losses_j, jnp.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100]))
+    return np.asarray(ci, dtype=np.float64), np.asarray(losses_j, dtype=np.float64)
+
+
+def _bootstrap_ks_jax(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: float = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """KS bootstrap via jax.vmap — CDF comparison using searchsorted."""
+    real_scores_np = score_df.loc[score_df['type'] == 'real', 'score'].values.astype(np.float32)
+    gen_scores_np = score_df.loc[score_df['type'] == 'generated', 'score'].values.astype(np.float32)
+    n_real, n_gen = len(real_scores_np), len(gen_scores_np)
+
+    # Same RNG call order
+    real_idx_np = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx_np = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+
+    real_scores_j = jnp.array(real_scores_np)
+    gen_scores_j = jnp.array(gen_scores_np)
+    real_idx_j = jnp.array(real_idx_np, dtype=jnp.int32)
+    gen_idx_j = jnp.array(gen_idx_np, dtype=jnp.int32)
+
+    @jax.vmap
+    def _ks_one(r_idx, g_idx):
+        r = jnp.sort(real_scores_j[r_idx])
+        g = jnp.sort(gen_scores_j[g_idx])
+        all_pts = jnp.concatenate([r, g])
+        cdf_r = jnp.searchsorted(r, all_pts, side='right').astype(jnp.float32) / n_real
+        cdf_g = jnp.searchsorted(g, all_pts, side='right').astype(jnp.float32) / n_gen
+        return jnp.max(jnp.abs(cdf_r - cdf_g))
+
+    losses_j = _ks_one(real_idx_j, gen_idx_j)
+
+    if whole_data_loss is not None:
+        losses_j = jnp.concatenate([jnp.array([whole_data_loss], dtype=jnp.float32), losses_j])
+
+    ci = jnp.percentile(losses_j, jnp.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100]))
+    return np.asarray(ci, dtype=np.float64), np.asarray(losses_j, dtype=np.float64)
 
 
 # TODO: optimise this performance-wise:
@@ -58,6 +270,87 @@ def _bootstrap(
 
     return ci, losses
 
+def _bootstrap_wasserstein(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: Optional[float] = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fast-path bootstrap for Wasserstein: numpy indexing, no DataFrame per iteration."""
+    losses = [whole_data_loss] if whole_data_loss is not None else []
+    real_scores = score_df.loc[score_df['type'] == 'real', 'score'].values.astype(float)
+    gen_scores = score_df.loc[score_df['type'] == 'generated', 'score'].values.astype(float)
+    n_real, n_gen = len(real_scores), len(gen_scores)
+    # Same RNG call order as _bootstrap() for reproducibility
+    real_idx = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+    for i in range(n_bootstrap):
+        losses.append(stats.wasserstein_distance(
+            real_scores[real_idx[i]], gen_scores[gen_idx[i]]))
+    losses = np.array(losses)
+    q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+    ci = np.percentile(losses, q=q)
+    return ci, losses
+
+
+def _bootstrap_ks(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: Optional[float] = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fast-path bootstrap for KS: numpy indexing, no DataFrame per iteration."""
+    losses = [whole_data_loss] if whole_data_loss is not None else []
+    real_scores = score_df.loc[score_df['type'] == 'real', 'score'].values.astype(float)
+    gen_scores = score_df.loc[score_df['type'] == 'generated', 'score'].values.astype(float)
+    n_real, n_gen = len(real_scores), len(gen_scores)
+    real_idx = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+    for i in range(n_bootstrap):
+        losses.append(stats.ks_2samp(
+            real_scores[real_idx[i]], gen_scores[gen_idx[i]]).statistic)
+    losses = np.array(losses)
+    q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+    ci = np.percentile(losses, q=q)
+    return ci, losses
+
+
+def _bootstrap_l1(
+    score_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    whole_data_loss: Optional[float] = None,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fast-path bootstrap for L1: numpy bincount instead of pandas groupby."""
+    losses = [whole_data_loss] if whole_data_loss is not None else []
+    type_vals = score_df['type'].values
+    real_mask = type_vals == 'real'
+    groups = score_df['group'].values
+    real_groups = groups[real_mask].astype(np.intp)
+    gen_groups = groups[~real_mask].astype(np.intp)
+    n_real, n_gen = len(real_groups), len(gen_groups)
+    n_bins = int(max(real_groups.max(), gen_groups.max())) + 1 if (n_real > 0 and n_gen > 0) else 1
+    # Same RNG call order as _bootstrap()
+    real_idx = rng_np.integers(0, n_real, size=(n_bootstrap, n_real))
+    gen_idx = rng_np.integers(0, n_gen, size=(n_bootstrap, n_gen))
+    for i in range(n_bootstrap):
+        r_counts = np.bincount(real_groups[real_idx[i]], minlength=n_bins).astype(float)
+        g_counts = np.bincount(gen_groups[gen_idx[i]], minlength=n_bins).astype(float)
+        r_sum, g_sum = r_counts.sum(), g_counts.sum()
+        if r_sum > 0:
+            r_counts /= r_sum
+        if g_sum > 0:
+            g_counts /= g_sum
+        losses.append(np.abs(r_counts - g_counts).sum() / 2.0)
+    losses = np.array(losses)
+    q = np.array([ci_alpha / 2 * 100, 100 - ci_alpha / 2 * 100])
+    ci = np.percentile(losses, q=q)
+    return ci, losses
+
+
 def wasserstein(
     score_df: pd.DataFrame,
     bootstrap_ci: bool = True,
@@ -82,10 +375,68 @@ def wasserstein(
     w = _wasserstein(score_df)
 
     if bootstrap_ci:
-        ci, losses = _bootstrap(score_df, _wasserstein, n_bootstrap, ci_alpha, w, rng_np)
+        # Subsample for bootstrap CI (point estimate w already computed on full data)
+        boot_df = _subsample_for_bootstrap(score_df)
+        if _use_jax_bootstrap(boot_df):
+            rng_state = rng_np.bit_generator.state
+            try:
+                ci, losses = _bootstrap_wasserstein_jax(boot_df, n_bootstrap, ci_alpha, w, rng_np)
+            except Exception as e:
+                if "RESOURCE_EXHAUSTED" in str(e) or "out of memory" in str(e).lower():
+                    print(f"[metrics] JAX OOM in wasserstein, falling back to numpy "
+                          f"({len(boot_df)} samples)", flush=True)
+                    rng_np.bit_generator.state = rng_state
+                    ci, losses = _bootstrap_wasserstein(boot_df, n_bootstrap, ci_alpha, w, rng_np)
+                else:
+                    raise
+        else:
+            ci, losses = _bootstrap_wasserstein(boot_df, n_bootstrap, ci_alpha, w, rng_np)
         return w, ci, losses
     else:
         return w
+
+def ks_distance(
+    score_df: pd.DataFrame,
+    bootstrap_ci: bool = True,
+    n_bootstrap: int = 100,
+    ci_alpha: float = 0.01,
+    rng_np: np.random.Generator = np.random.default_rng(12345),
+):
+    def _ks(score_df: pd.DataFrame):
+        p = score_df.loc[score_df['type'] == 'real', 'score']
+        q = score_df.loc[score_df['type'] == 'generated', 'score']
+        return stats.ks_2samp(p, q).statistic
+
+    if ('generated' not in score_df['type'].values) or ('real' not in score_df['type'].values):
+        if bootstrap_ci:
+            return np.nan, np.ones(2) * np.nan, np.ones(n_bootstrap+1) * np.nan
+        return np.nan
+
+    score_df = score_df.copy()
+    score_df.score = (score_df.score - score_df.score.mean()) / score_df.score.std()
+
+    ks = _ks(score_df)
+
+    if bootstrap_ci:
+        # Subsample for bootstrap CI (point estimate ks already computed on full data)
+        boot_df = _subsample_for_bootstrap(score_df)
+        if _use_jax_bootstrap(boot_df):
+            rng_state = rng_np.bit_generator.state
+            try:
+                ci, losses = _bootstrap_ks_jax(boot_df, n_bootstrap, ci_alpha, ks, rng_np)
+            except Exception as e:
+                if "RESOURCE_EXHAUSTED" in str(e) or "out of memory" in str(e).lower():
+                    print(f"[metrics] JAX OOM in ks_distance, falling back to numpy "
+                          f"({len(boot_df)} samples)", flush=True)
+                    rng_np.bit_generator.state = rng_state
+                    ci, losses = _bootstrap_ks(boot_df, n_bootstrap, ci_alpha, ks, rng_np)
+                else:
+                    raise
+        else:
+            ci, losses = _bootstrap_ks(boot_df, n_bootstrap, ci_alpha, ks, rng_np)
+        return ks, ci, losses
+    else:
+        return ks
 
 def l1_by_group(
     score_df: pd.DataFrame,
@@ -120,7 +471,22 @@ def l1_by_group(
     l1 = _calc_l1(score_df)
 
     if bootstrap_ci:
-        l1_ci, l1s = _bootstrap(score_df, _calc_l1, n_bootstrap, ci_alpha, l1, rng_np)
+        # Subsample for bootstrap CI (point estimate l1 already computed on full data)
+        boot_df = _subsample_for_bootstrap(score_df)
+        if _use_jax_bootstrap(boot_df):
+            rng_state = rng_np.bit_generator.state
+            try:
+                l1_ci, l1s = _bootstrap_l1_jax(boot_df, n_bootstrap, ci_alpha, l1, rng_np)
+            except Exception as e:
+                if "RESOURCE_EXHAUSTED" in str(e) or "out of memory" in str(e).lower():
+                    print(f"[metrics] JAX OOM in l1_by_group, falling back to numpy "
+                          f"({len(boot_df)} samples)", flush=True)
+                    rng_np.bit_generator.state = rng_state
+                    l1_ci, l1s = _bootstrap_l1(boot_df, n_bootstrap, ci_alpha, l1, rng_np)
+                else:
+                    raise
+        else:
+            l1_ci, l1s = _bootstrap_l1(boot_df, n_bootstrap, ci_alpha, l1, rng_np)
         return l1, l1_ci, l1s
     else:
         return l1

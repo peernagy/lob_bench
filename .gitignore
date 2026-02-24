@@ -1,32 +1,50 @@
-**.pyc
-**.json
-__pycache__/**
-/data_lob_bench/*
-./__pycache__/***
-**.pyc
-*.DS_Store
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data & results (large / generated at runtime)
+data/
+bench_data/
+data_lob_bench/
 data_lob_bench.tar.gz
-eval2.ipynb
-kl_checking.ipynb
-__pycache__/data_loading.cpython-310.pyc
-__pycache__/eval.cpython-310.pyc
-__pycache__/impact.cpython-310.pyc
-__pycache__/partitioning.cpython-310.pyc
-__pycache__/partitioning.cpython-310.pyc
-__pycache__/impact.cpython-310.pyc
-**.csv
-runs/**
-eval_*.ipynb
-**.zip
-images/*
+results/
+results_*/
+sample_data/
+old_result_files/
+
+# Logs
+logs/
+
+# Plots (generated)
+plots/
+images/
+
+# Notebooks (exploratory, not part of library)
+*.ipynb
+
+# Scratch / personal directories
+kang/
+LOCAL_TESTING/
+
+# Misc generated files
+*.csv
+*.zip
+*.json
+runs/
+core
+Miniconda3*
+
+# OS
+*.DS_Store
+
+# IDE
+.vscode/
+.claude/
+
+# Legacy comparison artifacts
 cis_*
 compare*
 comparison*
-__pycache__/*
 x_vals*
 ys*
-/plots/*
-results/*
-plots/* 
-old_result_files/*
-sample_data/*  

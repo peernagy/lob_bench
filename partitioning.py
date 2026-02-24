@@ -2,10 +2,23 @@
 """
 
 import itertools
+import warnings
 from typing import Callable, Iterable, Optional, Union
 import numpy as np
 import pandas as pd
 import data_loading
+
+
+# ---------------------------------------------------------------------------
+# Worker-pool configuration (set via set_n_workers before scoring calls)
+# ---------------------------------------------------------------------------
+_N_WORKERS = 1
+
+
+def set_n_workers(n: int) -> None:
+    """Set the number of parallel workers for sequence-level scoring."""
+    global _N_WORKERS
+    _N_WORKERS = max(1, n)
 
 
 def flatten(l, ltypes=(list, tuple)):
@@ -123,13 +136,63 @@ def _split_by_time_interval(
 
 """ Scoring Functions """
 
+def _align_messages_book(
+        messages: Optional[pd.DataFrame],
+        book: Optional[pd.DataFrame],
+    ) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], bool]:
+    if messages is None or book is None:
+        return None, None, False
+    if len(messages) == len(book):
+        return messages, book, False
+    min_len = min(len(messages), len(book))
+    if min_len == 0:
+        return None, None, True
+    return messages.iloc[:min_len], book.iloc[:min_len], True
+
+def _score_cond_one(seq, scoring_fn):
+    """Score one sequence's conditional data (helper for joblib dispatch)."""
+    messages, book, trimmed = _align_messages_book(seq.m_cond, seq.b_cond)
+    if trimmed:
+        warnings.warn(
+            "Conditional messages/book lengths differ; trimming to min length.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if messages is None or book is None:
+        return np.nan
+    return scoring_fn(messages, book)
+
+
 def score_cond(
         seqs: Iterable[data_loading.Lobster_Sequence],
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
     ):
     """
     """
-    scores = np.array([scoring_fn(seq.m_cond, seq.b_cond) for seq in seqs])
+    if _N_WORKERS > 1:
+        from joblib import Parallel, delayed
+        seqs_list = list(seqs)
+        scores = Parallel(n_jobs=_N_WORKERS, backend='loky')(
+            delayed(_score_cond_one)(seq, scoring_fn) for seq in seqs_list
+        )
+        scores = np.array(scores)
+    else:
+        scores = []
+        warned_sequences = set()
+        for seq_idx, seq in enumerate(seqs):
+            messages, book, trimmed = _align_messages_book(seq.m_cond, seq.b_cond)
+            if trimmed and seq_idx not in warned_sequences:
+                warnings.warn(
+                    "Conditional messages/book lengths differ; trimming to min length.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                warned_sequences.add(seq_idx)
+            if messages is None or book is None:
+                scores.append(np.nan)
+                continue
+            scores.append(scoring_fn(messages, book))
+        scores = np.array(scores)
     return scores
 
 def score_real_gen(
@@ -165,10 +228,17 @@ def _score_data(
     ) -> float:
     """
     """
-    scores = []
-    for seq in seqs:
-        score_i = _score_seq(seq, scoring_fn, score_real)
-        scores.append(score_i)
+    if _N_WORKERS > 1:
+        from joblib import Parallel, delayed
+        seqs_list = list(seqs)
+        scores = Parallel(n_jobs=_N_WORKERS, backend='loky')(
+            delayed(_score_seq)(seq, scoring_fn, score_real) for seq in seqs_list
+        )
+    else:
+        scores = []
+        for seq in seqs:
+            score_i = _score_seq(seq, scoring_fn, score_real)
+            scores.append(score_i)
     return scores
 
 def _score_seq(

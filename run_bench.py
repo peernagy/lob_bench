@@ -20,6 +20,7 @@ import time
 DEFAULT_METRICS = {
     'l1': metrics.l1_by_group,
     'wasserstein': metrics.wasserstein,
+    'ks': metrics.ks_distance,
 }
 
 
@@ -148,6 +149,100 @@ DEFAULT_SCORING_CONFIG_COND = {
 }
 
 
+######################## TIME-LAGGED SCORING ########################
+DEFAULT_SCORING_CONFIG_TIME_LAGGED = {
+    "ask_volume | spread (t-lag=500)": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.spread(m, b).values,
+            "discrete": True,
+        },
+        "lag": 500,
+    },
+    # "ask_volume | ofi (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    #         "discrete": False,
+    #     },
+    #     "lag": 500,
+    # },
+    # "bid_volume | ofi (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+    #         "discrete": False,
+    #     },
+    #     "lag": 500,
+    # },
+    "ask_volume_touch | ofi (t-lag=500)": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+            "discrete": False,
+        },
+        "lag": 500,
+    },
+    "bid_volume_touch | ofi (t-lag=500)": {
+        "eval": {
+            "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+        },
+        "cond": {
+            "fn": lambda m, b: eval.orderflow_imbalance(m, b).values,
+            "discrete": False,
+        },
+        "lag": 500,
+    },
+    # "orderbook_imbalance | spread (t-lag=500)": {
+    #     "eval": {
+    #         "fn": lambda m, b: eval.orderbook_imbalance(m, b).values,
+    #     },
+    #     "cond": {
+    #         "fn": lambda m, b: eval.spread(m, b).values,
+    #         "discrete": True,
+    #     },
+    #     "lag": 500,
+    # },
+}
+
+
+
+DEFAULT_SCORING_CONFIG_CONTEXT = {
+    "ask_volume | spread": {
+        "fn": lambda m, b: eval.l1_volume(m, b).ask_vol.values,
+        "context_fn": lambda m, b: eval.spread(m, b).values,
+        "context_config": {
+            "discrete": True,
+            "n_bins": 10,
+        }
+    },
+    # "bid_volume_touch | spread": {
+    #     "fn": lambda m, b: eval.l1_volume(m, b).bid_vol.values,
+    #     "context_fn": lambda m, b: eval.spread(m, b).values,
+    #     "context_config": {
+    #         "discrete": True,
+    #     }
+    # },
+}
+
+
+def _filter_config(config, metric_names):
+    """Filter a scoring config dict to only include specified metric names."""
+    filtered = {k: v for k, v in config.items() if k in metric_names}
+    missing = set(metric_names) - set(config.keys())
+    if missing:
+        print(f"[!] Warning: requested metrics not found in config: {missing}")
+    return filtered
+
+
 def save_results(scores, scores_dfs, save_path, protocol=-1):
     # make sure the folder exists
     folder_path = save_path.rsplit("/", 1)[0]
@@ -168,6 +263,8 @@ def run_benchmark(
     args: argparse.Namespace,
     scoring_config: dict[str, Any] = None,
     scoring_config_cond: dict[str, Any] = None,
+    scoring_config_context: dict[str, Any] = None,
+    scoring_config_time_lagged: dict[str, Any] = None,
     metric_config: dict[str, Any] = None,
 ) -> None:
     
@@ -181,8 +278,21 @@ def run_benchmark(
         scoring_config = DEFAULT_SCORING_CONFIG
     if scoring_config_cond is None:
         scoring_config_cond = DEFAULT_SCORING_CONFIG_COND
+    if scoring_config_context is None:
+        scoring_config_context = DEFAULT_SCORING_CONFIG_CONTEXT
+    if scoring_config_time_lagged is None:
+        scoring_config_time_lagged = DEFAULT_SCORING_CONFIG_TIME_LAGGED
     if metric_config is None:
         metric_config = DEFAULT_METRICS
+
+    # Filter scoring config to requested metric subset (for sharded runs).
+    # Only filters unconditional config (also used by divergence mode).
+    # Conditional/contextual/time-lagged have different key namespaces.
+    metrics_arg = getattr(args, "metrics", None)
+    if metrics_arg:
+        metric_names = [m.strip() for m in metrics_arg.split(",")]
+        scoring_config = _filter_config(scoring_config, metric_names)
+        print(f"[*] Filtered to {len(scoring_config)} metrics: {list(scoring_config.keys())}")
 
     if isinstance(args.stock, str):
         args.stock = [args.stock]
@@ -196,6 +306,32 @@ def run_benchmark(
     if args.model_version is None:
         args.model_version = [None]
 
+    errors: list[str] = []
+    last_progress_time = time.time()
+
+    def _maybe_log_progress(phase: str, stock: str, model_name: str, time_period: str, mv: Any) -> None:
+        nonlocal last_progress_time
+        interval = getattr(args, "progress_interval", 0) or 0
+        if interval <= 0:
+            return
+        now = time.time()
+        if now - last_progress_time < interval:
+            return
+        elapsed = int(now - last_progress_time)
+        print(
+            f"[progress] {phase} | stock={stock} model={model_name} time_period={time_period} "
+            f"model_version={mv} (+{elapsed}s)"
+        )
+        last_progress_time = now
+
+    def _record_failure(phase: str, stock: str, model_name: str, time_period: str, mv: Any, exc: Exception) -> None:
+        msg = (
+            f"[!] {phase} scoring failed for stock={stock}, model={model_name}, "
+            f"time_period={time_period}, model_version={mv}: {exc}"
+        )
+        print(msg)
+        errors.append(msg)
+
     for stock in args.stock:
         for model_name in args.model_name:
             for time_period in args.time_period:
@@ -206,6 +342,7 @@ def run_benchmark(
                         stock_model_path = f"{args.data_dir}/{model_name}/{stock}/{time_period}"
 
                     print(f"[*] Loading generated data from {stock_model_path}")
+                    _maybe_log_progress("loading", stock, model_name, time_period, mv)
                     loader = data_loading.Simple_Loader(
                         stock_model_path  + "/data_real", 
                         stock_model_path  + "/data_gen", 
@@ -217,98 +354,216 @@ def run_benchmark(
                     for s in loader:
                         s.materialize()
 
-                    time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if (not args.cond_only) and (not args.div_only):
+                    run_id = getattr(args, "run_id", None)
+                    shard_id = getattr(args, "shard_id", None)
+                    time_str = run_id if run_id else datetime.now().strftime("%Y%m%d_%H%M%S")
+                    shard_suffix = f"_shard{shard_id}" if shard_id else ""
+
+                    # Unconditional Scoring
+                    if args.unconditional:
                         print("[*] Running unconditional scoring")
-                        scores, score_dfs, plot_fns = scoring.run_benchmark(
-                            loader,
-                            scoring_config,
-                            # default_metric=metrics.l1_by_group
-                            # default_metric=metrics.wasserstein
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores,
-                            score_dfs,
-                            args.save_dir+"/scores"
-                            + f"/scores_uncond_{stock}_{model_name}_{str(mv)}_{time_str}.pkl"
-                        )
-                        print("... done")
+                        _maybe_log_progress("unconditional", stock, model_name, time_period, mv)
+                        try:
+                            mv_suffix = f"_{mv}" if mv is not None else ""
+                            scores, score_dfs, plot_fns = scoring.run_benchmark(
+                                loader,
+                                scoring_config,
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
+                            )
+                            print("[*] Saving results...")
+                            save_results(
+                                scores,
+                                score_dfs,
+                                args.save_dir+"/scores"
+                                + f"/scores_uncond_{stock}_{model_name}{mv_suffix}{shard_suffix}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("unconditional", stock, model_name, time_period, mv, exc)
 
-                    if (not args.uncond_only) and (not args.div_only):
+                    # Conditional Scoring
+                    if args.conditional:
                         print("[*] Running conditional scoring")
-                        scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
-                            loader,
-                            scoring_config_cond,
-                            # default_metric=metrics.l1_by_group
-                            # default_metric=metrics.wasserstein
-                            default_metric=metric_config
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_cond,
-                            score_dfs_cond,
-                            args.save_dir+"/scores"
-                            + f"/scores_cond_{stock}_{model_name}_{time_str}.pkl"
-                        )
-                        print("...done")
+                        _maybe_log_progress("conditional", stock, model_name, time_period, mv)
+                        try:
+                            scores_cond, score_dfs_cond, plot_fns_cond = scoring.run_benchmark(
+                                loader,
+                                scoring_config_cond,
+                                default_metric=metric_config,
+                                n_workers=args.n_workers,
+                            )
+                            print("[*] Saving results...")
+                            save_results(
+                                scores_cond,
+                                score_dfs_cond,
+                                args.save_dir+"/scores"
+                                + f"/scores_cond_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("conditional", stock, model_name, time_period, mv, exc)
 
-                    if (not args.cond_only) and (not args.uncond_only):
+                    # Contextual Scoring
+                    if args.context:
+                        print("[*] Running contextual scoring:")
+                        _maybe_log_progress("contextual", stock, model_name, time_period, mv)
+                        try:
+                            scores_context, score_dfs_context, plot_fns_context = scoring.run_benchmark(
+                                loader,
+                                scoring_config_context,
+                                default_metric=metric_config,
+                                contextual=True,
+                                n_workers=args.n_workers,
+                            )
+                            print("[*] Saving contextual results...")
+                            save_results(
+                                scores_context,
+                                score_dfs_context,
+                                args.save_dir+"/scores"
+                                + f"/scores_context_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except Exception as exc:
+                            _record_failure("contextual", stock, model_name, time_period, mv, exc)
+
+                    # Time-Lagged Scoring
+                    if args.time_lagged:
+                        print("[*] Running time-lagged scoring:")
+                        _maybe_log_progress("time-lagged", stock, model_name, time_period, mv)
+                        try:
+                            scores_time_lagged, score_dfs_time_lagged, plot_fns_time_lagged = scoring.run_benchmark(
+                                loader,
+                                scoring_config_time_lagged,
+                                default_metric=metric_config,
+                                time_lagged=True,
+                                n_workers=args.n_workers,
+                            )
+                            print("[*] Saving time-lagged results...")
+                            save_results(
+                                scores_time_lagged,
+                                score_dfs_time_lagged,
+                                args.save_dir+"/scores"
+                                + f"/scores_time_lagged_{stock}_{model_name}{shard_suffix}_{time_str}.pkl"
+                            )
+                            print("... done")
+                        except ValueError as exc:
+                            print(f"[!] Time-lagged scoring failed: {exc}")
+                            print("[!] Lagged scoring is not possible because the sequence is too short for the requested lag.")
+                            _record_failure("time-lagged", stock, model_name, time_period, mv, exc)
+                        except Exception as exc:
+                            _record_failure("time-lagged", stock, model_name, time_period, mv, exc)
+
+                    # Divergence Scoring
+                    if args.divergence:
                         print("[*] Running divergence scoring")
-                        scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
-                            loader, scoring_config, metrics.l1_by_group,
-                            divergence_horizon=args.divergence_horizon,
-                            divergence=True
-                        )
-                        print("[*] Saving results...")
-                        save_results(
-                            scores_,
-                            score_dfs_,
-                            args.save_dir+"/scores"
-                            + f"/scores_div_{stock}_{model_name}_"
-                            + f"{args.divergence_horizon}_{time_str}.pkl"
-                        )
+                        _maybe_log_progress("divergence", stock, model_name, time_period, mv)
+                        try:
+                            scores_, score_dfs_, plot_fns_ = scoring.run_benchmark(
+                                loader,
+                                scoring_config,
+                                default_metric=metric_config,
+                                divergence_horizon=args.divergence_horizon,
+                                divergence=True,
+                                n_workers=args.n_workers,
+                            )
+                            print("[*] Saving results...")
+                            save_results(
+                                scores_,
+                                score_dfs_,
+                                args.save_dir+"/scores"
+                                + f"/scores_div_{stock}_{model_name}{shard_suffix}_"
+                                + f"{args.divergence_horizon}_{time_str}.pkl"
+                            )
+                            print("... done")
 
-                    if args.div_error_bounds:
-                        print("[*] Calculating divergence lower bounds...")
-                        baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
-                            score_dfs_,
-                            metrics.l1_by_group
-                        )
-                        print("[*] Saving baseline errors...")
-                        save_results(
-                            baseline_errors_by_score,
-                            None,
-                            args.save_dir+"/scores"
-                            + f"/scores_div_{stock}_REAL_"
-                            + f"{args.divergence_horizon}_{time_str}.pkl"
-                        )
+                            if args.div_error_bounds:
+                                print("[*] Calculating divergence lower bounds...")
+                                baseline_errors_by_score = scoring.calc_baseline_errors_by_score(
+                                    score_dfs_,
+                                    metric_config
+                                )
+                                print("[*] Saving baseline errors...")
+                                save_results(
+                                    baseline_errors_by_score,
+                                    None,
+                                    args.save_dir+"/scores"
+                                    + f"/scores_div_{stock}_REAL{shard_suffix}_"
+                                    + f"{args.divergence_horizon}_{time_str}.pkl"
+                                )
+                                print("... done")
+                        except Exception as exc:
+                            _record_failure("divergence", stock, model_name, time_period, mv, exc)
 
                     print("[*] Done")
+
+    if errors:
+        error_list = "\n".join(errors)
+        raise RuntimeError(f"One or more scoring runs failed:\n{error_list}")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--stock", nargs='+', default="GOOG")
-    parser.add_argument("--time_period", nargs='+', default="2024")
+    parser.add_argument("--time_period", nargs='+', default="2023_Jan")
     parser.add_argument("--model_version", nargs='+', default=None)
-    parser.add_argument("--data_dir", default="./sample_data/data_saved", type=str)
+    parser.add_argument("--data_dir", default="/homes/groups/finance/data/evalsequences", type=str)
     parser.add_argument("--save_dir", type=str,default="./results")
-    parser.add_argument("--model_name", nargs='+', default="s5")
-    parser.add_argument("--uncond_only", action="store_true")
-    parser.add_argument("--cond_only", action="store_true")
-    parser.add_argument("--div_only", action="store_true")
+    parser.add_argument("--model_name", nargs='+', default="s5_main")
+    parser.add_argument("--unconditional", "--uncond_only", action="store_true")
+    parser.add_argument("--conditional", "--cond_only", action="store_true")
+    parser.add_argument("--context", "--context_only", action="store_true")
+    parser.add_argument("--time_lagged", "--time_lagged_only", action="store_true")
+    parser.add_argument("--divergence", "--div_only", action="store_true")
+    parser.add_argument("--all", action="store_true", dest="run_all")
     parser.add_argument("--div_error_bounds", action="store_true")
     parser.add_argument("--divergence_horizon", type=int, default=100)
+    parser.add_argument("--progress_interval", type=int, default=60)
+    parser.add_argument("--n_workers", type=int, default=1,
+                        help="Number of parallel workers (1 = serial, default)")
+    parser.add_argument("--metrics", type=str, default=None,
+                        help="Comma-separated metric names to score (for sharded runs)")
+    parser.add_argument("--run_id", type=str, default=None,
+                        help="Deterministic run ID for save paths (replaces timestamp)")
+    parser.add_argument("--shard_id", type=str, default=None,
+                        help="Shard identifier inserted into save filenames")
     args = parser.parse_args()
 
-    assert not (args.uncond_only and args.cond_only), \
-        "Cannot specify both uncond_only and cond_only as args"
-
-    assert not (args.div_error_bounds and (args.uncond_only or args.cond_only)), \
-        "Cannot calculate divergence error bounds without running divergence scoring"
+    # Determine which scoring types to run
+    scoring_types = {
+        'unconditional': args.unconditional,
+        'conditional': args.conditional,
+        'context': args.context,
+        'time_lagged': args.time_lagged,
+        'divergence': args.divergence,
+    }
+    
+    # If --all flag is provided, enable all scoring types
+    if args.run_all:
+        for key in scoring_types:
+            scoring_types[key] = True
+    # If no flags are provided, ask for confirmation to run all
+    elif not any(scoring_types.values()):
+        print("\n[*] No scoring flags provided. Will benchmark on all metrics by default.")
+        confirmation = input("[?] Press 'y' to proceed or any other key to cancel: ").strip().lower()
+        if confirmation != 'y':
+            print("[!] Cancelled.")
+            exit(0)
+        # Enable all scoring types
+        for key in scoring_types:
+            scoring_types[key] = True
+    
+    # Update args with the scoring type flags
+    args.unconditional = scoring_types['unconditional']
+    args.conditional = scoring_types['conditional']
+    args.context = scoring_types['context']
+    args.time_lagged = scoring_types['time_lagged']
+    args.divergence = scoring_types['divergence']
+    
+    assert not (args.div_error_bounds and not (args.divergence or args.run_all)), \
+        "Cannot calculate divergence error bounds without running divergence scoring (use --divergence or --all flag)"
+    
     t0=time.time()
     run_benchmark(args)
     t1=time.time()

@@ -1,6 +1,9 @@
+import os
 import numpy as np
 import pandas as pd
+import warnings
 from typing import Callable, Iterable, List, Optional,Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import plotting
 import partitioning
@@ -141,6 +144,374 @@ def score_data_cond(
         return score_df
 
 
+def _score_one_seq_lagged(seq, scoring_fn, scoring_fn_lagged, lag, is_real):
+    """Process one sequence for time-lagged scoring (module-level for joblib pickling)."""
+
+    def _align_and_slice(m_merged, b_merged):
+        min_len = min(len(m_merged), len(b_merged))
+        if min_len <= lag:
+            return None, None
+        return m_merged.iloc[:min_len].iloc[lag:], b_merged.iloc[:min_len].iloc[lag:]
+
+    def _align_scores(score_lagged, score_eval):
+        sl = np.asarray(score_lagged)
+        se = np.asarray(score_eval)
+        if sl.ndim == 0 or se.ndim == 0:
+            return None, None
+        ml = min(len(sl), len(se))
+        if ml == 0:
+            return None, None
+        return sl[-ml:], se[-ml:]
+
+    if is_real:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
+            b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
+        m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+        if m_sliced is None:
+            return None
+        sl = scoring_fn_lagged(m_sliced, b_sliced)
+        se = scoring_fn(m_sliced, b_sliced)
+        sl, se = _align_scores(sl, se)
+        if sl is None:
+            return None
+        return (sl, se)
+    else:
+        scores_lagged_seq = []
+        scores_eval_seq = []
+        for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
+                b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
+            m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+            if m_sliced is None:
+                continue
+            sl = scoring_fn_lagged(m_sliced, b_sliced)
+            se = scoring_fn(m_sliced, b_sliced)
+            sl, se = _align_scores(sl, se)
+            if sl is None:
+                continue
+            scores_lagged_seq.append(sl)
+            scores_eval_seq.append(se)
+        if not scores_lagged_seq:
+            return None
+        return (tuple(scores_lagged_seq), tuple(scores_eval_seq))
+
+
+def score_data_time_lagged(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    scoring_fn_lagged: Callable[[pd.DataFrame, pd.DataFrame], float],
+    lag: int,
+    *,
+    return_plot_fn: bool = False,
+    score_kwargs: dict = {},
+    score_lagged_kwargs: dict = {},
+    n_workers: int = 1,
+):
+    """
+    Time-lagged conditional scoring: evaluate scoring_fn at time t conditioned on 
+    scoring_fn_lagged at time t-lag.
+    
+    Sequences are merged as: conditional_data + real/generated_data.
+    The conditioning metric is computed on merged data and shifted by lag.
+    The evaluation metric is computed on merged data, with the first lag points dropped.
+    
+    Grouping is done based on the lagged scoring_fn_lagged
+    and scores are based on the scoring_fn.
+    
+    Returns a dataframe with columns [score, group, subgroup, score_lagged, type]
+    similar to score_data_cond, where:
+    - 'group' is the bin of the lagged conditioning metric
+    - 'subgroup' is the bin of the evaluation metric within each lagged group
+    - 'score_lagged' is the value of the conditioning metric at t-lag
+    """
+    
+    def merge_and_score_lagged(seqs, is_real=True):
+        """
+        Merge conditional + real/gen data, compute lagged conditioning scores.
+        Returns: (scores_lagged, scores_eval) both as lists matching score_real_gen format
+        
+        The strategy is to:
+        1. Compute the lagged conditioning metric on merged (cond + real/gen) data
+        2. Compute the evaluation metric on the SAME merged data
+        3. Slice both by [lag:] to align them temporally
+        
+        This requires slicing the input data BEFORE passing to scoring functions
+        to ensure the messages and book dataframes stay aligned.
+        """
+        scores_lagged_list = []
+        scores_eval_list = []
+
+        def _align_and_slice(m_merged: pd.DataFrame, b_merged: pd.DataFrame):
+            min_len = min(len(m_merged), len(b_merged))
+            if min_len <= lag:
+                return None, None
+            m_trim = m_merged.iloc[:min_len].iloc[lag:]
+            b_trim = b_merged.iloc[:min_len].iloc[lag:]
+            return m_trim, b_trim
+
+        def _align_scores(score_lagged, score_eval):
+            if score_lagged is None or score_eval is None:
+                return None, None
+            score_lagged_arr = np.asarray(score_lagged)
+            score_eval_arr = np.asarray(score_eval)
+            if score_lagged_arr.ndim == 0 or score_eval_arr.ndim == 0:
+                return None, None
+            min_len = min(len(score_lagged_arr), len(score_eval_arr))
+            if min_len == 0:
+                return None, None
+            return score_lagged_arr[-min_len:], score_eval_arr[-min_len:]
+        
+        for seq in seqs:
+            if is_real:
+                # Merge conditional + real data
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", FutureWarning)
+                    m_merged = pd.concat([seq.m_cond, seq.m_real], ignore_index=False)
+                    b_merged = pd.concat([seq.b_cond, seq.b_real], ignore_index=False)
+                
+                # Align lengths, then slice off the first lag points
+                m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+
+                if m_sliced is None:
+                    # Skip sequences that are too short
+                    continue
+                
+                # Compute metrics on sliced data
+                score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
+                score_eval_shifted = scoring_fn(m_sliced, b_sliced)
+                score_lagged_shifted, score_eval_shifted = _align_scores(
+                    score_lagged_shifted, score_eval_shifted
+                )
+
+                if score_lagged_shifted is None:
+                    continue
+                
+                scores_lagged_list.append(score_lagged_shifted)
+                scores_eval_list.append(score_eval_shifted)
+            else:
+                # For generated, collect scores for all samples of this sequence
+                scores_lagged_seq = []
+                scores_eval_seq = []
+                for m_gen, b_gen in zip(seq.m_gen, seq.b_gen):
+                    # Merge conditional + generated data
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", FutureWarning)
+                        m_merged = pd.concat([seq.m_cond, m_gen], ignore_index=False)
+                        b_merged = pd.concat([seq.b_cond, b_gen], ignore_index=False)
+                    
+                    # Align lengths, then slice off the first lag points
+                    m_sliced, b_sliced = _align_and_slice(m_merged, b_merged)
+
+                    if m_sliced is None:
+                        # Skip samples that are too short
+                        continue
+                    
+                    # Compute metrics on sliced data
+                    score_lagged_shifted = scoring_fn_lagged(m_sliced, b_sliced)
+                    score_eval_shifted = scoring_fn(m_sliced, b_sliced)
+                    score_lagged_shifted, score_eval_shifted = _align_scores(
+                        score_lagged_shifted, score_eval_shifted
+                    )
+
+                    if score_lagged_shifted is None:
+                        continue
+                    
+                    scores_lagged_seq.append(score_lagged_shifted)
+                    scores_eval_seq.append(score_eval_shifted)
+                
+                # Only append if we got at least one valid sample
+                if scores_lagged_seq:
+                    scores_lagged_list.append(tuple(scores_lagged_seq))
+                    scores_eval_list.append(tuple(scores_eval_seq))
+        
+        return scores_lagged_list, scores_eval_list
+    
+    # Compute lagged conditioning scores and evaluation scores
+    if n_workers > 1:
+        from joblib import Parallel, delayed
+        seqs_list = list(loader)
+        real_results = Parallel(n_jobs=n_workers, backend='loky')(
+            delayed(_score_one_seq_lagged)(
+                seq, scoring_fn, scoring_fn_lagged, lag, True)
+            for seq in seqs_list
+        )
+        scores_lagged_real = [r[0] for r in real_results if r is not None]
+        scores_eval_real = [r[1] for r in real_results if r is not None]
+        gen_results = Parallel(n_jobs=n_workers, backend='loky')(
+            delayed(_score_one_seq_lagged)(
+                seq, scoring_fn, scoring_fn_lagged, lag, False)
+            for seq in seqs_list
+        )
+        scores_lagged_gen = [r[0] for r in gen_results if r is not None]
+        scores_eval_gen = [r[1] for r in gen_results if r is not None]
+    else:
+        scores_lagged_real, scores_eval_real = merge_and_score_lagged(loader, is_real=True)
+        scores_lagged_gen, scores_eval_gen = merge_and_score_lagged(loader, is_real=False)
+    
+    # Stage 1: Bin based on lagged conditioning metric
+    groups_real, groups_gen, thresholds = partitioning.group_by_score(
+        scores_lagged_real, scores_lagged_gen,
+        return_thresholds=True,
+        **score_lagged_kwargs
+    )
+    
+    # Create initial score table with lagged groups
+    score_df = partitioning.get_score_table(scores_eval_real, scores_eval_gen, groups_real, groups_gen)
+    
+    # Create table for lagged scores
+    score_df_lagged = partitioning.get_score_table(scores_lagged_real, scores_lagged_gen, groups_real, groups_gen)
+    
+    # Stage 2: For each lagged group, bin the evaluation scores
+    score_df['subgroup'] = -1
+    score_df['score_cond'] = score_df_lagged.score
+    sub_dfs = [df[1] for df in score_df.groupby('group')]
+    new_dfs = []
+    for df in sub_dfs:
+        real_scores = df.loc[df.type == 'real', 'score']
+        gen_scores = df.loc[df.type == 'generated', 'score']
+        groups_real_sub, groups_gen_sub = partitioning.group_by_score(
+            real_scores.values,
+            gen_scores.values,
+            **score_kwargs
+        )
+        df = df.copy()
+        df.loc[real_scores.index, 'subgroup'] = groups_real_sub
+        df.loc[gen_scores.index, 'subgroup'] = groups_gen_sub
+        new_dfs.append(df)
+    score_df = pd.concat(new_dfs)
+    
+    if return_plot_fn:
+        plot_fn = lambda var_eval, var_lagged, bins, binwidth: plotting.facet_grid_hist(
+            score_df,
+            var_eval=var_eval,
+            var_cond=var_lagged,
+            filter_groups_below_weight=0.01,
+            bins=bins,
+            binwidth=binwidth,
+        )
+        return score_df, plot_fn
+    else:
+        return score_df
+
+
+def score_data_context(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
+    *,
+    return_plot_fn: bool = False,
+    score_context_kwargs: dict = {},
+):
+    """
+    Context-aware scoring that evaluates performance within market regimes.
+    
+    Regimes are defined from CONDITIONAL data using scoring_fn_context.
+    The evaluation metric is computed from real/generated data using scoring_fn,
+    and compared within each regime.
+    
+    Returns:
+        score_df: DataFrame with columns [score, group, type]
+        where 'group' is the regime ID from conditional data
+        plot_fn: (optional) Plotting function if return_plot_fn=True
+    """
+    # Step 1: Define regimes from CONDITIONAL data
+    scores_cond = partitioning.score_cond(loader, scoring_fn_context)
+    _, _, thresholds = partitioning.group_by_score(
+        scores_cond, scores_cond,
+        return_thresholds=True,
+        **score_context_kwargs
+    )
+    
+    # Step 2: Assign real/gen data to the same regimes using thresholds from conditional
+    scores_real, scores_gen = partitioning.score_real_gen(loader, scoring_fn_context)
+    groups_real, groups_gen = partitioning.group_by_score(
+        scores_real, scores_gen,
+        thresholds=thresholds
+    )[:2]
+    
+    # Step 3: Evaluate metric of interest within each regime
+    eval_real, eval_gen = partitioning.score_real_gen(loader, scoring_fn)
+    score_df = partitioning.get_score_table(eval_real, eval_gen, groups_real, groups_gen)
+    
+    # Add the context scores (regime identifiers) to the dataframe for plotting
+    score_df_context = partitioning.get_score_table(scores_real, scores_gen, groups_real, groups_gen)
+    score_df['score_cond'] = score_df_context.score
+    
+    if return_plot_fn:
+        plot_fn = lambda var_eval, var_context, bins, binwidth: plotting.facet_grid_hist(
+            score_df,
+            var_eval=var_eval,
+            var_cond=var_context,
+            filter_groups_below_weight=0.01,
+            bins=bins,
+            binwidth=binwidth,
+        )
+        return score_df, plot_fn
+    else:
+        return score_df
+
+
+def compute_metrics_context(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    metric_fn: dict[str, Callable[[pd.DataFrame], float]],
+    scoring_fn_context: Callable[[pd.DataFrame, pd.DataFrame], float],
+    score_context_kwargs: dict = {},
+    ci_alpha: float = 0.01,
+) -> tuple[dict, pd.DataFrame, Callable]:
+    """
+    Compute metrics for contextual regime-based scoring.
+    Aggregates metrics across regimes, weighting by observation count.
+    
+    Returns:
+        metric: dict[metric_name: (point_est, ci, bootstrapped_losses)]
+        score_df: DataFrame with columns [score, group, type]
+        plot_fn: Plotting function for contextual histograms
+    """
+    score_df, plot_fn = score_data_context(
+        loader, scoring_fn, scoring_fn_context,
+        return_plot_fn=True,
+        score_context_kwargs=score_context_kwargs
+    )
+    
+    # Calculate metrics for each regime and aggregate across regimes
+    lens = []
+    losses = []
+    for regime_id, regime_df in score_df.groupby('group'):
+        lens.append(len(regime_df))
+        losses.append(
+            np.stack(
+                tuple(mfn(regime_df)[2] for mfn in metric_fn.values()),
+                axis=-1
+            )
+        )
+    
+    # Calculate weights by normalizing the number of observations
+    weights = np.array(lens, dtype=float)
+    weights /= weights.sum()
+    losses = np.array(losses).T
+    
+    # Sum over all regimes
+    # shape: (num metrics, n_bootstrap + 1, num regimes)
+    #     -> (num metrics, n_bootstrap + 1)
+    metric = np.nansum(losses * weights, axis=-1)
+    
+    # Get the percentiles of the bootstrapped loss values
+    q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+    # shape: (num metrics, n_bootstrap + 1)
+    ci = np.nanpercentile(metric, q, axis=-1).T
+    metric = {
+        m_name: (m[0], ci_, m) for m_name, ci_, m
+            in zip(metric_fn.keys(), ci, metric)
+    }
+    
+    return metric, score_df, plot_fn
+
+
 def score_prediction_horizons(
     loader: data_loading.Simple_Loader,
     scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
@@ -191,6 +562,80 @@ def score_prediction_horizons(
         score_dfs.append(score_df)
 
     return score_dfs
+
+
+
+
+def compute_metrics_time_lagged(
+    loader: data_loading.Simple_Loader,
+    scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
+    metric_fn: dict[str, Callable[[pd.DataFrame], float]],
+    scoring_fn_lagged: Callable[[pd.DataFrame, pd.DataFrame], float],
+    lag: int,
+    score_kwargs: dict = {},
+    score_lagged_kwargs: dict = {},
+    n_workers: int = 1,
+) -> tuple[float, pd.DataFrame, Callable]:
+    """
+    Compute metrics for time-lagged conditional scoring.
+
+    Args:
+        loader: Data loader
+        scoring_fn: Evaluation metric function
+        metric_fn: Dictionary of metric functions to apply
+        scoring_fn_lagged: Lagged conditioning metric function
+        lag: Time lag in message counts
+        score_kwargs: Kwargs for binning evaluation metric
+        score_lagged_kwargs: Kwargs for binning lagged conditioning metric
+        n_workers: Number of parallel workers for sequence-level scoring
+
+    Returns:
+        metric: Dictionary of metric values
+        score_df: DataFrame with scores and groupings
+        plot_fn: Plotting function
+    """
+    score_df, plot_fn = score_data_time_lagged(
+        loader, scoring_fn, scoring_fn_lagged, lag,
+        return_plot_fn=True, score_kwargs=score_kwargs,
+        score_lagged_kwargs=score_lagged_kwargs,
+        n_workers=n_workers,
+    )
+
+    # calc. loss for each of the conditional distributions
+    lens = []
+    losses = []
+    for name, group in score_df.groupby('group'):
+        lens.append(len(group))
+        # use the subgroup for binning now:
+        group.group = group.subgroup
+        losses.append(
+            np.stack(
+                tuple(mfn(group)[2] for mfn in metric_fn.values()),
+                axis=-1
+            )
+        )
+
+    # calculate weights by normalizing the number of observations
+    weights = np.array(lens, dtype=float)
+    weights /= weights.sum()
+    losses = np.array(losses).T
+
+    # sum over all groups
+    # shape: (num metrics, n_bootstrap + 1, num groups)
+    #     -> (num metrics, n_bootstrap + 1)
+    metric = np.nansum(losses * weights, axis=-1)
+
+    # get the percentiles of the bootstrapped loss values
+    ci_alpha = 0.01
+    q = np.array([ci_alpha/2 * 100, 100 - ci_alpha/2*100])
+    # shape: (num metrics, n_bootstrap + 1)
+    ci = np.nanpercentile(metric, q, axis=-1).T
+    metric = {
+        m_name: (m[0], ci_, m) for m_name, ci_, m
+            in zip(metric_fn.keys(), ci, metric)
+    }
+
+    return metric, score_df, plot_fn
 
 
 def compute_metrics(
@@ -274,12 +719,18 @@ def _replace_gen_with_real_scores(horizon_df):
 
 def calc_baseline_errors_by_score(
     scoring_dfs_horizon_all_scores: dict[str, list[pd.DataFrame]],
-    metric_fn: Callable[[pd.DataFrame], float],
-) -> dict[str, list[float]]:
+    metric_fn: Union[Callable[[pd.DataFrame], float],
+                     dict[str, Callable[[pd.DataFrame], float]]],
+) -> dict[str, list]:
+    # Use first metric (typically l1) for baseline reference line
+    if isinstance(metric_fn, dict):
+        first_fn = next(iter(metric_fn.values()))
+    else:
+        first_fn = metric_fn
     baseline_errors_by_score = {
         score_name: [
             # TODO: generalize this to other metrics
-            metric_fn(
+            first_fn(
                 _replace_gen_with_real_scores(df),
                 # we want one-sided: 0.99
                 # --> upper limit of the two-sided intervals for 0.98
@@ -293,8 +744,8 @@ def calc_baseline_errors_by_score(
 def compute_divergence_metrics(
         loader: data_loading.Simple_Loader,
         scoring_fn: Callable[[pd.DataFrame, pd.DataFrame], float],
-        metric_fn: Union[Callable[[pd.DataFrame], float] , \
-                   Iterable[Callable[[pd.DataFrame], float]]],
+        metric_fn: Union[Callable[[pd.DataFrame], float],
+                   dict[str, Callable[[pd.DataFrame], float]]],
         horizon_length: int,
         **kwargs,
     ):
@@ -307,18 +758,130 @@ def compute_divergence_metrics(
         # quantiles=[0.25, 0.5, 0.75],
         **kwargs,
     )
-    # L1 scores for each horizon distribution
-    loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
 
-    plot_fn = lambda title, ax: plotting.error_divergence_plot(
-        loss_horizons,
-        horizon_length,
-        title=title,
-        xlabel='Prediction Horizon [messages]',
-        ylabel='L1 score',
-        ax=ax,
-    )
+    if isinstance(metric_fn, dict):
+        # Per-metric divergence curves: {name: [(point, ci, losses), ...per horizon]}
+        loss_horizons = {
+            m_name: [m(sdf) for sdf in score_dfs_horizon]
+            for m_name, m in metric_fn.items()
+        }
+        # Plot uses first metric (consistent with compute_metrics pattern)
+        first_key = next(iter(loss_horizons))
+        plot_fn = lambda title, ax, _lh=loss_horizons[first_key]: \
+            plotting.error_divergence_plot(
+                _lh, horizon_length, title=title,
+                xlabel='Prediction Horizon [messages]', ylabel='L1 score',
+                ax=ax,
+            )
+    else:
+        # Legacy single-callable path
+        loss_horizons = [metric_fn(sdf) for sdf in score_dfs_horizon]
+        plot_fn = lambda title, ax: plotting.error_divergence_plot(
+            loss_horizons, horizon_length, title=title,
+            xlabel='Prediction Horizon [messages]', ylabel='L1 score',
+            ax=ax,
+        )
+
     return loss_horizons, score_dfs_horizon, plot_fn
+
+
+def _score_single_metric(score_name, score_config, loader, default_metric,
+                         divergence, contextual, time_lagged,
+                         divergence_horizon, n_workers):
+    """Score a single metric config. Thread-safe (reads loader, no shared mutation)."""
+    # time-lagged scoring
+    if time_lagged:
+        score_cond_config = score_config["cond"]
+        score_config_eval = score_config["eval"]
+        lag = score_config.get("lag", 500)
+        score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
+        score_kwargs = get_kwargs(score_config_eval, conditional=True)
+        score_fn_cond = score_cond_config["fn"]
+        metric_fns = score_config_eval.get("metric_fns", default_metric)
+
+        metric, sdf, pfn = compute_metrics_time_lagged(
+            loader,
+            score_config_eval["fn"],
+            metric_fns,
+            score_fn_cond,
+            lag,
+            score_kwargs=score_kwargs,
+            score_lagged_kwargs=score_cond_kwargs,
+            n_workers=n_workers,
+        )
+
+    # contextual scoring
+    elif contextual:
+        score_context_fn = score_config.get("context_fn", None)
+        score_context_config = score_config.get("context_config", {})
+        score_context_kwargs = get_kwargs(score_context_config, conditional=True)
+        metric_fns = score_config.get("metric_fns", default_metric)
+
+        if score_context_fn is None:
+            raise ValueError(f"contextual=True but 'context_fn' not found in config for {score_name}")
+
+        metric, sdf, pfn = compute_metrics_context(
+            loader,
+            score_config["fn"],
+            metric_fns,
+            score_context_fn,
+            score_context_kwargs=score_context_kwargs,
+        )
+
+    # conditional scoring
+    elif score_config.get("eval", None) is not None:
+        score_cond_config = score_config["cond"]
+        score_config_eval = score_config["eval"]
+        score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
+        score_kwargs = get_kwargs(score_config_eval, conditional=True)
+        score_fn_cond = score_cond_config["fn"]
+        metric_fns = score_config_eval.get("metric_fns", default_metric)
+
+        if divergence:
+            metric, sdf, pfn = compute_divergence_metrics(
+                loader,
+                score_config_eval["fn"],
+                metric_fns,
+                divergence_horizon,
+                **get_kwargs(score_config_eval)
+            )
+        else:
+            metric, sdf, pfn = compute_metrics(
+                loader,
+                score_config_eval["fn"],
+                metric_fns,
+                score_fn_cond,
+                score_kwargs=score_kwargs,
+                score_cond_kwargs=score_cond_kwargs,
+            )
+
+    # unconditional scoring
+    else:
+        score_kwargs = get_kwargs(score_config)
+        metric_fns = score_config.get("metric_fns", default_metric)
+
+        if divergence:
+            metric, sdf, pfn = compute_divergence_metrics(
+                loader,
+                score_config["fn"],
+                metric_fns,
+                divergence_horizon,
+                **get_kwargs(score_config)
+            )
+        else:
+            metric, sdf, pfn = compute_metrics(
+                loader,
+                score_config["fn"],
+                metric_fns,
+                None,
+                score_kwargs=score_kwargs,
+                score_cond_kwargs={},
+            )
+
+    return score_name, metric, sdf, pfn
+
+
+_N_METRIC_WORKERS = int(os.environ.get("BENCH_METRIC_WORKERS", "4"))
 
 
 def run_benchmark(
@@ -326,7 +889,10 @@ def run_benchmark(
     scoring_config_dict: dict,
     default_metric: Callable[[pd.DataFrame], float],
     divergence: bool = False,
+    contextual: bool = False,
+    time_lagged: bool = False,
     divergence_horizon: int = 50,
+    n_workers: int = 1,
 ) -> tuple[
     dict[str, float],
     dict[str, pd.DataFrame],
@@ -337,45 +903,45 @@ def run_benchmark(
     score_dfs = {}
     plot_fns = {}
 
-    for score_name, score_config in scoring_config_dict.items():
-        print("Calculating scores and metrics for: ", score_name, end="\r\n")
+    # Enable sequence-level parallelism for ALL modes (including unconditional).
+    # Each metric runs serially, but its per-sequence scoring is parallelized
+    # across workers via joblib/loky (process-based, avoids GIL).
+    if n_workers > 1:
+        partitioning.set_n_workers(n_workers)
 
-        # conditional scoring
-        if score_config.get("eval", None) is not None:
-            score_cond_config = score_config["cond"]
-            score_config = score_config["eval"]
-            score_cond_kwargs = get_kwargs(score_cond_config, conditional=True)
-            score_kwargs = get_kwargs(score_config, conditional=True)
-            score_fn_cond = score_cond_config["fn"]
-        # unconditional scoring
-        else:
-            score_cond_kwargs = {}
-            score_fn_cond = None
-            score_kwargs = get_kwargs(score_config)
+    if _N_METRIC_WORKERS > 1:
+        print(f"[scoring] Parallelizing {len(scoring_config_dict)} metrics "
+              f"across {_N_METRIC_WORKERS} threads", flush=True)
+        with ThreadPoolExecutor(max_workers=_N_METRIC_WORKERS) as pool:
+            futures = {
+                pool.submit(
+                    _score_single_metric, name, cfg, loader, default_metric,
+                    divergence, contextual, time_lagged, divergence_horizon,
+                    n_workers
+                ): name
+                for name, cfg in scoring_config_dict.items()
+            }
+            for future in as_completed(futures):
+                name, metric, sdf, pfn = future.result()
+                print(f"  [done] {name}", flush=True)
+                scores[name] = metric
+                score_dfs[name] = sdf
+                plot_fns[name] = pfn
+    else:
+        for score_name, score_config in scoring_config_dict.items():
+            print("Calculating scores and metrics for: ", score_name, end="\r\n")
+            _, metric, sdf, pfn = _score_single_metric(
+                score_name, score_config, loader, default_metric,
+                divergence, contextual, time_lagged, divergence_horizon,
+                n_workers
+            )
+            scores[score_name] = metric
+            score_dfs[score_name] = sdf
+            plot_fns[score_name] = pfn
 
-        # print('score_cond_kwargs:', score_cond_kwargs)
-        metric_fns = score_config.get("metric_fns", default_metric)
-
-        if divergence:
-            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
-                compute_divergence_metrics(
-                    loader,
-                    score_config["fn"],
-                    metric_fns,
-                    divergence_horizon,
-                    **get_kwargs(score_config)
-                )
-
-        else:
-            scores[score_name], score_dfs[score_name], plot_fns[score_name] = \
-                compute_metrics(
-                    loader,
-                    score_config["fn"],
-                    metric_fns,
-                    score_fn_cond,
-                    score_kwargs=score_kwargs,
-                    score_cond_kwargs=score_cond_kwargs,
-                )
+    # Reset worker count to avoid side effects on subsequent calls
+    if n_workers > 1:
+        partitioning.set_n_workers(1)
 
     return scores, score_dfs, plot_fns
 
@@ -391,7 +957,9 @@ def summary_stats(
     # for each metric:
     values_list = list(scores.values())
     for i, metric_name in enumerate(values_list[0].keys()):
-        loss_vals = np.array([s[metric_name][0] for s in scores.values()])
+        # Extract bootstrap losses [2] instead of point estimates [0]
+        # to enable proper statistical variation computation
+        loss_vals = np.array([s[metric_name][2] for s in scores.values()])
 
         # loss_vals = np.array(
         #     [[score[2] for score in sdict.values()[0]] for sdict in scores.values()])
