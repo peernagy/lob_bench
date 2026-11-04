@@ -397,7 +397,9 @@ def impact_compare(loader:Simple_Loader,
                    model="BLANK",
                    ticksize=100,
                    save_dir='./'):
-    x=(10** np.arange(0.3,2.4,step=0.1)).astype(int) # Lag l values
+    # Lag l values, log-spaced 1..199. The int cast maps 10**0.5 and 10**0.6
+    # both to 3; np.unique keeps one, so each lag has weight 1/L (L = 20).
+    x=np.unique((10** np.arange(0.3,2.4,step=0.1)).astype(int))
     [1]+list(x)
     events=['MO_0','MO_1','LO_0','LO_1','CA_0','CA_1'] # Bouchaud event types from 6 propagator model.
     ys_real=[]
@@ -416,8 +418,9 @@ def impact_compare(loader:Simple_Loader,
         confidence_ints_gen.append(g_ci)
         confidence_ints_real.append(r_ci)
 
-        # Calculate sum of abs differences. 
-        delta=np.sum(np.abs(np.array(r_m)-np.array(g_m)))
+        # Mean of abs differences over the lag grid: Delta R_pi in eq. 7 of
+        # the LOB-Bench paper (section 4.1), which carries the 1/L factor.
+        delta=np.mean(np.abs(np.array(r_m)-np.array(g_m)))
         diff[event]=delta
     abs_diffs=np.array(list(diff.values()))
 
@@ -673,7 +676,7 @@ def run_impact(args):
                                     ticker=ticker,
                                     save_dir=args.save_dir+f"/impact/{ticker}/{model}",
                                     model=model)
-                    print("Sum of differences of response function: ",res["Mean_Diffs"])
+                    print("Mean over event types of the mean abs difference of response functions (eq. 7): ",res["Mean_Diffs"])
     if args.micro_plot:
         for ticker in args.stock:
             y_list=[]
